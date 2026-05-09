@@ -1,0 +1,53 @@
+<<<<<<< SEARCH
+  const handlePreviewAuto = async () => {
+      setLoading(true);
+      try {
+          const fetched = await fetchRandomQuestionsFromBank(classLevel, autoCount);
+          if (fetched.length === 0) {
+              alert("No questions in bank for this class yet! Use AI Mode first to populate the bank.");
+          } else {
+              setQuestions(fetched);
+              setStep('PREVIEW');
+          }
+      } catch (e) {
+          console.error(e);
+      } finally {
+          setLoading(false);
+      }
+  };
+=======
+  const handlePreviewAuto = async () => {
+      setLoading(true);
+      try {
+          const bankQuestions = await fetchRandomQuestionsFromBank(classLevel, autoCount);
+
+          // Also fetch questions from past challenges to mix them
+          const allPastChallenges = await getAllChallenges();
+          const pastQuestions = allPastChallenges
+              .filter(c => c.classLevel === classLevel)
+              .flatMap(c => c.questions);
+
+          // Deduplicate based on question text to avoid same questions
+          const combined = [...bankQuestions, ...pastQuestions];
+          const uniqueQuestionsMap = new Map();
+          combined.forEach(q => {
+              uniqueQuestionsMap.set(q.question.trim().toLowerCase(), q);
+          });
+
+          let finalPool = Array.from(uniqueQuestionsMap.values());
+
+          if (finalPool.length === 0) {
+              alert("No questions in bank or past challenges for this class yet! Use AI or Import Mode first.");
+          } else {
+              // Shuffle and slice to the required count
+              finalPool = finalPool.sort(() => 0.5 - Math.random()).slice(0, autoCount);
+              setQuestions(finalPool);
+              setStep('PREVIEW');
+          }
+      } catch (e) {
+          console.error(e);
+      } finally {
+          setLoading(false);
+      }
+  };
+>>>>>>> REPLACE

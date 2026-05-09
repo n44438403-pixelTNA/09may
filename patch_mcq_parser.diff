@@ -1,0 +1,15 @@
+<<<<<<< SEARCH
+    // Add if valid
+    if (q.question && q.options && q.options.length > 0 && q.correctAnswer !== undefined) {
+      questions.push(q as MCQItem);
+
+      // Try to extract notes that might be appended after the last known section
+      // Often notes are appended after "Difficulty Level: ... \n\n"
+=======
+    // Add if valid
+    if (q.question && q.options && q.options.length > 0 && q.correctAnswer !== undefined) {
+      questions.push(q as MCQItem);
+
+      // Try to extract notes that might be appended after the last known section
+      // Often notes are appended after "Difficulty Level: ... \n\n"
+>>>>>>> REPLACE

@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to check if the user is logged in
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if the user is an Admin
+    // Resolves Firestore evaluation errors caused by nested get() calls
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'STUDENT') in ['ADMIN', 'SUB_ADMIN']) ||
+        (exists(/databases/$(database)/documents/nst_users/$(request.auth.uid)) && get(/databases/$(database)/documents/nst_users/$(request.auth.uid)).data.get('role', 'STUDENT') in ['ADMIN', 'SUB_ADMIN'])
+      );
+    }
+
+    // ---------------------------------------------------------
+    // USERS COLLECTION (Profile Data)
+    // ---------------------------------------------------------
+    match /users/{userId} {
+      // Anyone logged in can read ANY profile (useful for leaderboards, etc.)
+      // Or restrict to: allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow read: if isAuthenticated();
+
+      // Users can only create/update their OWN profile, Admins can update any.
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+
+      // Only admins can delete accounts completely from DB
+      allow delete: if isAdmin();
+    }
+
+    match /nst_users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------
+    // USER DATA COLLECTION (Bulky Data like History/Tests)
+    // ---------------------------------------------------------
+    match /user_data/{userId} {
+      // Users can only read/write their own bulky data
+      allow read, write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // ---------------------------------------------------------
+    // REDEEM CODES (Critical Security)
+    // ---------------------------------------------------------
+    match /redeem_codes/{codeId} {
+      // Any authenticated user can READ the code to verify it during redemption
+      allow read: if isAuthenticated();
+
+      // Only admins can CREATE or DELETE codes
+      allow create, delete: if isAdmin();
+
+      // Users can UPDATE the code ONLY to increment usage or add their ID (Redemption process)
+      // This prevents them from modifying the reward amount or changing other code properties.
+      // Allow a few harmless optional fields (timestamps) so the dual-DB sync from RTDB
+      // doesn't get blocked when the snapshot includes them.
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedCount', 'isRedeemed', 'redeemedBy', 'lastRedeemedAt', 'updatedAt'])
+        )
+      );
+    }
+
+    // Users can read/write to their own subcollections (history, tests)
+    match /users/{userId}/{subcollection}/{docId} {
+      allow read, write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // ---------------------------------------------------------
+    // CONTENT & SYSTEM COLLECTIONS (Read-Only for Users)
+    // ---------------------------------------------------------
+    match /config/{document=**} {
+      allow read: if true; // Often needed before login (e.g., maintenance mode, theme)
+      allow write: if isAdmin();
+    }
+
+    match /content_data/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /custom_syllabus/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /public_activity/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /universal_analysis_logs/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /ai_interactions/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // ---------------------------------------------------------
+    // ADMIN ONLY COLLECTIONS
+    // ---------------------------------------------------------
+    match /admin_stats/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    match /admin_secure/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // ---------------------------------------------------------
+    // DEFAULT DENY
+    // ---------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

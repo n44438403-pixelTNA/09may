@@ -1,0 +1,24 @@
+--- types.ts
++++ types.ts
+@@ -387,6 +387,17 @@
+   answer: string;
+ }
+
++export interface HomeworkItem {
++  id: string;
++  date: string;
++  title: string;
++  notes?: string;
++  mcqText?: string;
++  parsedMcqs?: MCQItem[];
++  audioUrl?: string;
++  videoUrl?: string;
++}
++
+ export interface SystemSettings {
+   loadingScreenVideoUrl?: string; // NEW: Video to show before loading screen
+   dailyGk?: DailyGkItem[]; // NEW: Daily GK
++  homework?: HomeworkItem[]; // NEW: Homework
+   globalChallengeMcq?: MCQItem[]; // NEW: Global Challenge MCQ
+   googleAuthOnly?: boolean;
+     teacherCodes?: TeacherCode[];

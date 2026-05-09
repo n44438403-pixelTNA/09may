@@ -1,0 +1,42 @@
+<<<<<<< SEARCH
+import { Challenge20, ClassLevel, MCQItem, Subject } from '../../types';
+import { fetchLessonContent } from '../../services/groq';
+import { parseMCQText } from '../../utils/mcqParser';
+import { saveChallenge20, saveQuestionsToBank, fetchRandomQuestionsFromBank } from '../../services/questionBank';
+import { DEFAULT_SUBJECTS, getSubjectsList } from '../../constants';
+import { Sparkles, Trophy, Calendar, Save, RefreshCw, Plus, Layers, Trash2 } from 'lucide-react';
+
+interface Props {
+  onBack: () => void;
+  language: 'English' | 'Hindi';
+}
+
+export const ChallengeCreator20: React.FC<Props> = ({ onBack, language }) => {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [type, setType] = useState<'DAILY_CHALLENGE' | 'WEEKLY_TEST'>('DAILY_CHALLENGE');
+  const [classLevel, setClassLevel] = useState<ClassLevel>('10');
+  const [mode, setMode] = useState<'AI' | 'AUTO' | 'IMPORT'>('AI');
+=======
+import { Challenge20, ClassLevel, MCQItem, Subject } from '../../types';
+import { fetchLessonContent } from '../../services/groq';
+import { parseMCQText } from '../../utils/mcqParser';
+import { saveChallenge20, saveQuestionsToBank, fetchRandomQuestionsFromBank, getAllChallenges, deleteChallenge20 } from '../../services/questionBank';
+import { DEFAULT_SUBJECTS, getSubjectsList } from '../../constants';
+import { Sparkles, Trophy, Calendar, Save, RefreshCw, Plus, Layers, Trash2, History } from 'lucide-react';
+
+interface Props {
+  onBack: () => void;
+  language: 'English' | 'Hindi';
+}
+
+export const ChallengeCreator20: React.FC<Props> = ({ onBack, language }) => {
+  const [viewMode, setViewMode] = useState<'CREATE' | 'HISTORY'>('CREATE');
+  const [pastChallenges, setPastChallenges] = useState<Challenge20[]>([]);
+
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [type, setType] = useState<'DAILY_CHALLENGE' | 'WEEKLY_TEST'>('DAILY_CHALLENGE');
+  const [classLevel, setClassLevel] = useState<ClassLevel>('10');
+  const [mode, setMode] = useState<'AI' | 'AUTO' | 'IMPORT'>('AI');
+>>>>>>> REPLACE

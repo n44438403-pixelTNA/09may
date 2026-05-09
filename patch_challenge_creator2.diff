@@ -1,0 +1,48 @@
+<<<<<<< SEARCH
+  const [topic, setTopic] = useState('');
+  const [aiCount, setAiCount] = useState(10);
+
+  // Auto Mode State
+  const [autoCount, setAutoCount] = useState(10);
+
+  // Import Mode State
+  const [importText, setImportText] = useState('');
+
+  // Common State
+  const [questions, setQuestions] = useState<MCQItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<'CONFIG' | 'PREVIEW'>('CONFIG');
+  const [durationMinutes, setDurationMinutes] = useState(type === 'DAILY_CHALLENGE' ? 15 : 60);
+=======
+  const [topic, setTopic] = useState('');
+  const [aiCount, setAiCount] = useState(10);
+
+  // Auto Mode State
+  const [autoCount, setAutoCount] = useState(10);
+
+  // Import Mode State
+  const [importText, setImportText] = useState('');
+
+  // Common State
+  const [questions, setQuestions] = useState<MCQItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<'CONFIG' | 'PREVIEW'>('CONFIG');
+  const [durationMinutes, setDurationMinutes] = useState(type === 'DAILY_CHALLENGE' ? 15 : 60);
+
+  React.useEffect(() => {
+      loadHistory();
+  }, []);
+
+  const loadHistory = async () => {
+      const all = await getAllChallenges();
+      // Sort by creation date descending
+      setPastChallenges(all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+  };
+
+  const handleDeleteHistory = async (id: string) => {
+      if (confirm("Are you sure you want to delete this challenge?")) {
+          await deleteChallenge20(id);
+          await loadHistory();
+      }
+  };
+>>>>>>> REPLACE

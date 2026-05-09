@@ -1,0 +1,94 @@
+--- components/StudentDashboard.tsx
++++ components/StudentDashboard.tsx
+@@ -7013,6 +7013,35 @@
+                 <span className="relative z-10">{user.streak}</span>
+               </button>
+
++              {/* Credits 👑 */}
++              {!(settings?.hiddenTopBarButtons || []).includes('CREDITS') && (
++                ((settings?.specialDiscountEvent?.enabled && (isDiscountLive || isDiscountCooldown)) ? topBarCreditFlip : false) ? (
++                  <button
++                    onClick={() => onTabChange("STORE")}
++                    className={`keep-light-badge banner-premium-shimmer inline-flex items-center justify-center gap-1 min-w-[84px] h-6 px-1 rounded-full shadow-sm text-[8px] font-black hover:scale-105 transition-all duration-500 ease-out whitespace-nowrap shrink-0 border animate-in fade-in zoom-in ${
++                      user.subscriptionLevel === 'ULTRA' && user.isPremium
++                        ? 'bg-gradient-to-r from-sky-500/25 to-cyan-400/15 text-white border-sky-300/40 shadow-[0_0_12px_rgba(56,189,248,0.25)]'
++                        : user.subscriptionLevel === 'BASIC' && user.isPremium
++                          ? 'bg-gradient-to-r from-sky-500/20 to-cyan-400/10 text-white border-sky-300/35 shadow-[0_0_10px_rgba(56,189,248,0.18)]'
++                          : 'bg-[#FDFBF7] text-slate-800 border-amber-100'
++                    }`}
++                    title="Discount"
++                  >
++                    <Ticket size={14} />
++                    <span>{Number(settings?.specialDiscountEvent?.discountPercent ?? 20)}%</span>
++                  </button>
++                ) : (
++                  <button
++                    onClick={() => onTabChange("STORE")}
++                    className={`keep-light-badge banner-premium-shimmer inline-flex items-center justify-center gap-1 min-w-[84px] h-6 px-1 rounded-full shadow-sm text-[8px] font-black hover:scale-105 transition-all duration-500 ease-out whitespace-nowrap shrink-0 border animate-in fade-in zoom-in ${
++                      user.subscriptionLevel === 'ULTRA' && user.isPremium
++                        ? 'bg-gradient-to-r from-sky-500/25 to-cyan-400/15 text-white border-sky-300/40 shadow-[0_0_12px_rgba(56,189,248,0.25)]'
++                        : user.subscriptionLevel === 'BASIC' && user.isPremium
++                          ? 'bg-gradient-to-r from-sky-500/20 to-cyan-400/10 text-white border-sky-300/35 shadow-[0_0_10px_rgba(56,189,248,0.18)]'
++                          : 'bg-[#FDFBF7] text-slate-800 border-amber-100'
++                    }`}
++                    title="Credits"
++                  >
++                    <Crown size={14} className={user.subscriptionLevel === 'ULTRA' && user.isPremium ? 'text-white' : 'fill-slate-800'} />
++                    <span>{user.credits} CR</span>
++                  </button>
++                )
++              )}
++
+-              {/* Rotate screen (LIFETIME only) */}
+-              {user.subscriptionTier === 'LIFETIME' && (
++              {/* Rotate screen (For all users) */}
+                 <button
+                   onClick={async () => {
+@@ -7033,5 +7062,4 @@
+                 >
+                   <RotateCcw size={15} className={isLandscape ? 'animate-spin-slow' : ''} />
+                 </button>
+-              )}
+
+@@ -7066,41 +7094,6 @@
+             </div>{/* end w-max inner */}
+             </div>{/* end overflow-x-auto strip */}
+
+-            {/* ── FIXED: Credits button — always visible on the right ── */}
+-            {!(settings?.hiddenTopBarButtons || []).includes('CREDITS') && (
+-              <div className="shrink-0 ml-1">
+-                {((settings?.specialDiscountEvent?.enabled && (isDiscountLive || isDiscountCooldown)) ? topBarCreditFlip : false) ? (
+-                  <button
+-                    onClick={() => onTabChange("STORE")}
+-                    className={`keep-light-badge banner-premium-shimmer inline-flex items-center justify-center gap-1 min-w-[84px] h-6 px-1 rounded-full shadow-sm text-[8px] font-black hover:scale-105 transition-all duration-500 ease-out whitespace-nowrap shrink-0 border animate-in fade-in zoom-in ${
+-                      user.subscriptionLevel === 'ULTRA' && user.isPremium
+-                        ? 'bg-gradient-to-r from-sky-500/25 to-cyan-400/15 text-white border-sky-300/40 shadow-[0_0_12px_rgba(56,189,248,0.25)]'
+-                        : user.subscriptionLevel === 'BASIC' && user.isPremium
+-                          ? 'bg-gradient-to-r from-sky-500/20 to-cyan-400/10 text-white border-sky-300/35 shadow-[0_0_10px_rgba(56,189,248,0.18)]'
+-                          : 'bg-[#FDFBF7] text-slate-800 border-amber-100'
+-                    }`}
+-                    title="Discount"
+-                  >
+-                    <Ticket size={14} />
+-                    <span>{Number(settings?.specialDiscountEvent?.discountPercent ?? 20)}%</span>
+-                  </button>
+-                ) : (
+-                  <button
+-                    onClick={() => onTabChange("STORE")}
+-                    className={`keep-light-badge banner-premium-shimmer inline-flex items-center justify-center gap-1 min-w-[84px] h-6 px-1 rounded-full shadow-sm text-[8px] font-black hover:scale-105 transition-all duration-500 ease-out whitespace-nowrap shrink-0 border animate-in fade-in zoom-in ${
+-                      user.subscriptionLevel === 'ULTRA' && user.isPremium
+-                        ? 'bg-gradient-to-r from-sky-500/25 to-cyan-400/15 text-white border-sky-300/40 shadow-[0_0_12px_rgba(56,189,248,0.25)]'
+-                        : user.subscriptionLevel === 'BASIC' && user.isPremium
+-                          ? 'bg-gradient-to-r from-sky-500/20 to-cyan-400/10 text-white border-sky-300/35 shadow-[0_0_10px_rgba(56,189,248,0.18)]'
+-                          : 'bg-[#FDFBF7] text-slate-800 border-amber-100'
+-                    }`}
+-                    title="Credits"
+-                  >
+-                    <Crown size={14} className={user.subscriptionLevel === 'ULTRA' && user.isPremium ? 'text-white' : 'fill-slate-800'} />
+-                    <span>{user.credits} CR</span>
+-                  </button>
+-                )}
+-              </div>
+-            )}
+-
+           </div>

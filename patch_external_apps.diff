@@ -1,0 +1,39 @@
+<<<<<<< SEARCH
+                                          />
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+                  {activeTab === 'CONFIG_REWARDS' && (
+=======
+                                          />
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
+
+                          <div className="mt-6">
+                              <button
+                                  onClick={handleSaveSettings}
+                                  disabled={saving}
+                                  className={`w-full py-4 text-white font-black rounded-xl text-lg shadow-xl shadow-green-500/20 flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 ${saving ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500'}`}
+                              >
+                                  {saving ? (
+                                      <>
+                                          <div className="w-5 h-5 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                          Saving Configuration...
+                                      </>
+                                  ) : (
+                                      <>
+                                          <Save size={24} />
+                                          Save External Apps
+                                      </>
+                                  )}
+                              </button>
+                          </div>
+                      </div>
+                  )}
+                  {activeTab === 'CONFIG_REWARDS' && (
+>>>>>>> REPLACE

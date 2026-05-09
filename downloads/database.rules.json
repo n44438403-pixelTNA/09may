@@ -1,0 +1,193 @@
+{
+  "rules": {
+
+    "users": {
+      ".read": "auth != null",
+      ".indexOn": ["role", "subscriptionLevel"],
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+        "role": {
+          ".validate": "newData.val() === 'STUDENT' || newData.val() === 'TEACHER' || newData.val() === 'SUB_ADMIN' || newData.val() === 'ADMIN' || newData.val() === null || ((newData.val() === 'ADMIN' || newData.val() === 'SUB_ADMIN') && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || data.val() === 'ADMIN' || data.val() === 'SUB_ADMIN'))"
+        }
+      }
+    },
+
+    "nst_users": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN')"
+      }
+    },
+
+    "redeem_codes": {
+      ".read": "auth != null",
+      "$codeId": {
+        ".write": "auth != null",
+        "type":     { ".validate": "!data.exists() || newData.val() === data.val() || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN'" },
+        "amount":   { ".validate": "!data.exists() || newData.val() === data.val() || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN'" },
+        "maxUses":  { ".validate": "!data.exists() || newData.val() === data.val() || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN'" },
+        "subTier":  { ".validate": "!data.exists() || newData.val() === data.val() || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN'" },
+        "subLevel": { ".validate": "!data.exists() || newData.val() === data.val() || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN'" },
+        "code":     { ".validate": "!data.exists() || newData.val() === data.val() || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN'" },
+
+        "usedCount": { ".validate": "newData.isNumber() && (!data.exists() || newData.val() >= data.val())" },
+
+        "redeemedBy": { ".validate": "true" },
+
+        "isRedeemed": { ".validate": "newData.isBoolean()" }
+      }
+    },
+
+    "teacherCodes": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN')",
+      "$code": {
+        ".write": "auth != null"
+      }
+    },
+
+    "system_settings": {
+      ".read": "true",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "nst_universal_playlist": {
+       ".read": "auth != null",
+       ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+    "nst_universal_notes": {
+       ".read": "auth != null",
+       ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "content_data": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "custom_syllabus": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "public_activity": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "note_stars": {
+      ".read": "auth != null",
+      ".indexOn": ["count", "lastUpdated"],
+      "$hash": {
+        ".write": "auth != null",
+        "count":       { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "label":       { ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 400)" },
+        "noteKey":     { ".validate": "!newData.exists() || newData.isString()" },
+        "lastUpdated": { ".validate": "!newData.exists() || newData.isNumber()" },
+        "users": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.isBoolean() || !newData.exists()"
+          }
+        }
+      }
+    },
+
+    "community_mcqs": {
+      ".read": "auth != null",
+      "$mcqId": {
+        ".write": "auth != null && (!data.exists() || data.child('publisherUid').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+      }
+    },
+
+    "community_notes": {
+      ".read": "auth != null",
+      "$noteId": {
+        ".write": "auth != null && (!data.exists() || data.child('publisherUid').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+      }
+    },
+
+    "universal_analysis_logs": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "ai_interactions": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+      "$uid": {
+         ".read": "auth != null && auth.uid === $uid",
+         ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+
+    "demand_requests": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "content_links": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "recovery_requests": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+      ".write": "true"
+    },
+
+    "custom_blogger_page": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "universal_updates": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "admin_secure": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "secure_keys": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    },
+
+    "chat": {
+      ".read": "auth != null",
+      "universal": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".indexOn": ["timestamp"],
+        "$msgId": {
+          ".write": "auth != null && (!data.exists() || data.child('userId').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+          ".validate": "!newData.exists() || (newData.hasChildren(['text', 'userId']) && newData.child('userId').val() === auth.uid)"
+        }
+      },
+      "dm": {
+        "$uid": {
+          ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+          ".write": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')",
+          ".indexOn": ["timestamp"]
+        }
+      },
+      "rooms": {
+        "$roomId": {
+          ".read": "auth != null",
+          ".write": "auth != null",
+          ".indexOn": ["timestamp"],
+          "$msgId": {
+            ".write": "auth != null && (!data.exists() || data.child('userId').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+          }
+        }
+      }
+    },
+
+    "$other": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'ADMIN' || root.child('users').child(auth.uid).child('role').val() === 'SUB_ADMIN' || root.child('nst_users').child(auth.uid).child('role').val() === 'SUB_ADMIN')"
+    }
+  }
+}

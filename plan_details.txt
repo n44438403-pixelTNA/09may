@@ -1,0 +1,27 @@
+Features to strictly control with NSTA_CONTROL:
+
+Notes (5 types):
+1. QUICK_REVISION
+2. DEEP_DIVE (Topic Notes)
+3. PREMIUM_NOTES
+4. TEACHER_STRATEGY (Teaching Strategy Notes)
+5. ADDITIONAL_NOTES
+
+MCQs (2 types):
+1. MCQ_FREE (Standard Practice)
+2. MCQ_PREMIUM (Premium Test)
+
+Videos (2 types):
+1. UNIVERSAL_VIDEO (Free/Universal Video)
+2. PREMIUM_VIDEO
+
+Audio (1 type):
+1. PREMIUM_AUDIO
+
+Analysis (1 type):
+1. PREMIUM_ANALYSIS
+
+AI (1 type):
+1. AI_TUTOR
+
+We will ensure these 12 keys exist in utils/featureRegistry.ts and are referenced properly in permission checks, and add them to NSTA Control logic if needed.

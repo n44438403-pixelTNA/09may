@@ -1,0 +1,176 @@
+<<<<<<< SEARCH
+        {/* DAILY GK & GLOBAL CHALLENGE (Only on Home) */}
+        {activeTab === 'HOME' && (
+            <div className="mx-2 mt-2 space-y-2">
+                {/* GLOBAL CHALLENGE MCQ */}
+                {settings?.globalChallengeMcq && settings.globalChallengeMcq.length > 0 && (
+                    <div className="bg-gradient-to-r from-orange-50 to-amber-50 p-4 rounded-xl border border-orange-200 shadow-sm relative overflow-hidden">
+                        <div className="absolute top-0 right-0 -mr-4 -mt-4 text-orange-200 opacity-50">
+                            <Trophy size={64} />
+                        </div>
+                        <h4 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-2 flex items-center gap-2 relative z-10">
+                            <Trophy size={14} className="text-orange-600" /> Challenge of the Day
+                        </h4>
+                        <div className="relative z-10">
+                            <p className="font-bold text-slate-800 text-sm mb-3 leading-snug">{settings.globalChallengeMcq[0].question}</p>
+                            <div className="space-y-2">
+                                {settings.globalChallengeMcq[0].options.map((opt, i) => (
+                                    <button
+                                        key={i}
+                                        onClick={() => {
+                                            if (i === settings.globalChallengeMcq![0].correctAnswer) {
+                                                showAlert("🎉 Correct Answer! Great job!", "SUCCESS");
+                                            } else {
+                                                showAlert(`❌ Incorrect. The right answer is: ${settings.globalChallengeMcq![0].options[settings.globalChallengeMcq![0].correctAnswer]}`, "ERROR");
+                                            }
+                                        }}
+                                        className="w-full text-left p-2.5 rounded-lg border border-orange-200 bg-white hover:bg-orange-100 text-sm font-medium text-slate-700 transition-colors shadow-sm"
+                                    >
+                                        {String.fromCharCode(65 + i)}. {opt}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* DAILY GK */}
+                {settings?.dailyGk && settings.dailyGk.length > 0 && (
+                    <div className="bg-gradient-to-r from-teal-50 to-emerald-50 p-4 rounded-xl border border-teal-200 shadow-sm flex items-start gap-3 relative overflow-hidden cursor-pointer" onClick={() => setShowDailyGkHistory(true)}>
+                        <div className="absolute top-0 right-0 -mr-4 -mt-4 text-teal-200 opacity-50">
+                            <BookOpen size={64} />
+                        </div>
+                        <div className="bg-teal-100 p-2 rounded-lg text-teal-600 shrink-0 relative z-10">
+                            <BookOpen size={20} />
+                        </div>
+                        <div className="flex-1 relative z-10 pr-6">
+                            <h4 className="text-[10px] font-black text-teal-800 uppercase tracking-widest mb-1">Daily GK • {settings.dailyGk[settings.dailyGk.length - 1].date}</h4>
+                            <p className="font-bold text-slate-800 text-sm leading-snug mb-1">{settings.dailyGk[settings.dailyGk.length - 1].question}</p>
+                            <p className="text-teal-700 text-xs font-medium bg-teal-100/50 p-2 rounded inline-block">Ans: {settings.dailyGk[settings.dailyGk.length - 1].answer}</p>
+                        </div>
+                        <button
+                            className="absolute top-3 right-3 text-[10px] font-bold bg-white text-teal-600 px-2 py-1 rounded shadow-sm border border-teal-200 uppercase"
+                            onClick={(e) => { e.stopPropagation(); setShowDailyGkHistory(true); }}
+                        >
+                            History
+                        </button>
+                    </div>
+                )}
+            </div>
+        )}
+=======
+        {/* DAILY GK & GLOBAL CHALLENGE (Only on Home) */}
+        {activeTab === 'HOME' && (
+            <div className="mx-2 mt-2 relative min-h-[120px]">
+                {(() => {
+                    const banners: React.ReactNode[] = [];
+
+                    // 1. GLOBAL CHALLENGE MCQ
+                    if (settings?.globalChallengeMcq && settings.globalChallengeMcq.length > 0) {
+                        banners.push(
+                            <div key="global-challenge" className="bg-gradient-to-r from-orange-50 to-amber-50 p-4 rounded-xl border border-orange-200 shadow-sm relative overflow-hidden h-full w-full absolute top-0 left-0 animate-in fade-in zoom-in duration-300">
+                                <div className="absolute top-0 right-0 -mr-4 -mt-4 text-orange-200 opacity-50">
+                                    <Trophy size={64} />
+                                </div>
+                                <h4 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-2 flex items-center gap-2 relative z-10">
+                                    <Trophy size={14} className="text-orange-600" /> Challenge of the Day
+                                </h4>
+                                <div className="relative z-10">
+                                    <p className="font-bold text-slate-800 text-sm mb-3 leading-snug">{settings.globalChallengeMcq[0].question}</p>
+                                    <div className="space-y-2">
+                                        {settings.globalChallengeMcq[0].options.map((opt, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => {
+                                                    if (i === settings.globalChallengeMcq![0].correctAnswer) {
+                                                        showAlert("🎉 Correct Answer! Great job!", "SUCCESS");
+                                                    } else {
+                                                        showAlert(`❌ Incorrect. The right answer is: ${settings.globalChallengeMcq![0].options[settings.globalChallengeMcq![0].correctAnswer]}`, "ERROR");
+                                                    }
+                                                }}
+                                                className="w-full text-left p-2.5 rounded-lg border border-orange-200 bg-white hover:bg-orange-100 text-sm font-medium text-slate-700 transition-colors shadow-sm"
+                                            >
+                                                {String.fromCharCode(65 + i)}. {opt}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // 2. DAILY GK
+                    if (settings?.dailyGk && settings.dailyGk.length > 0) {
+                        banners.push(
+                            <div key="daily-gk" className="bg-gradient-to-r from-teal-50 to-emerald-50 p-4 rounded-xl border border-teal-200 shadow-sm flex items-start gap-3 relative overflow-hidden cursor-pointer h-full w-full absolute top-0 left-0 animate-in fade-in zoom-in duration-300" onClick={() => setShowDailyGkHistory(true)}>
+                                <div className="absolute top-0 right-0 -mr-4 -mt-4 text-teal-200 opacity-50">
+                                    <BookOpen size={64} />
+                                </div>
+                                <div className="bg-teal-100 p-2 rounded-lg text-teal-600 shrink-0 relative z-10">
+                                    <BookOpen size={20} />
+                                </div>
+                                <div className="flex-1 relative z-10 pr-6">
+                                    <h4 className="text-[10px] font-black text-teal-800 uppercase tracking-widest mb-1">Daily GK • {settings.dailyGk[settings.dailyGk.length - 1].date}</h4>
+                                    <p className="font-bold text-slate-800 text-sm leading-snug mb-1">{settings.dailyGk[settings.dailyGk.length - 1].question}</p>
+                                    <p className="text-teal-700 text-xs font-medium bg-teal-100/50 p-2 rounded inline-block">Ans: {settings.dailyGk[settings.dailyGk.length - 1].answer}</p>
+                                </div>
+                                <button
+                                    className="absolute top-3 right-3 text-[10px] font-bold bg-white text-teal-600 px-2 py-1 rounded shadow-sm border border-teal-200 uppercase"
+                                    onClick={(e) => { e.stopPropagation(); setShowDailyGkHistory(true); }}
+                                >
+                                    History
+                                </button>
+                            </div>
+                        );
+                    }
+
+                    // 3. CHALLENGE 2.0
+                    if (activeChallenges20.length > 0) {
+                        activeChallenges20.forEach((challenge, idx) => {
+                             banners.push(
+                                <div key={`challenge-20-${idx}`} className="bg-gradient-to-r from-violet-50 to-purple-50 p-4 rounded-xl border border-violet-200 shadow-sm relative overflow-hidden h-full w-full absolute top-0 left-0 animate-in fade-in zoom-in duration-300">
+                                    <div className="absolute top-0 right-0 -mr-4 -mt-4 text-violet-200 opacity-50">
+                                        <Rocket size={64} />
+                                    </div>
+                                    <h4 className="text-xs font-black text-violet-800 uppercase tracking-widest mb-2 flex items-center gap-2 relative z-10">
+                                        <Rocket size={14} className="text-violet-600" /> {challenge.type === 'DAILY_CHALLENGE' ? 'Daily Challenge' : 'Weekly Test'} 2.0
+                                    </h4>
+                                    <div className="relative z-10">
+                                        <p className="font-bold text-slate-800 text-sm mb-1 leading-snug">{challenge.title}</p>
+                                        <p className="text-xs text-slate-600 mb-3">{challenge.questions.length} Questions • {challenge.durationMinutes} Mins</p>
+                                        <button
+                                            onClick={() => {
+                                                // If it's a weekly test logic, start it.
+                                                if (challenge.type === 'WEEKLY_TEST' && onStartWeeklyTest) {
+                                                    // Map Challenge20 to WeeklyTest structure or just start
+                                                    onStartWeeklyTest({ id: challenge.id, title: challenge.title, date: new Date().toISOString(), durationMinutes: challenge.durationMinutes, isCompleted: false, score: 0, totalQuestions: challenge.questions.length, questions: challenge.questions, classLevel: challenge.classLevel } as any);
+                                                } else {
+                                                    // Display it in MCQ View or start challenge logic
+                                                    onNavigate('MCQ_REVIEW'); // Or specific Challenge UI
+                                                    showAlert("Challenge 2.0 started!", "SUCCESS");
+                                                }
+                                            }}
+                                            className="w-full text-center p-2 rounded-lg bg-violet-600 text-white text-sm font-bold shadow-md hover:bg-violet-700 transition-colors"
+                                        >
+                                            Start Challenge
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        });
+                    }
+
+                    if (banners.length === 0) return null;
+
+                    // Show only the current banner
+                    const currentIndex = homeBannerIndex % banners.length;
+
+                    return (
+                        <div className="relative min-h-[160px]">
+                            {banners[currentIndex]}
+                        </div>
+                    );
+                })()}
+            </div>
+        )}
+>>>>>>> REPLACE

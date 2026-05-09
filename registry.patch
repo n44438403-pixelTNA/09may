@@ -1,0 +1,20 @@
+--- utils/featureRegistry.ts
++++ utils/featureRegistry.ts
+@@ -621,6 +621,17 @@
+         icon: 'Layers',
+         color: 'orange'
+     },
++    {
++        id: 'ADMIN_HOMEWORK',
++        label: 'Homework',
++        group: 'CONTENT',
++        surfaceLevel: 3,
++        adminVisible: true,
++        adminTab: 'HOMEWORK_MANAGER',
++        requiredPermission: 'MANAGE_CONTENT',
++        icon: 'BookOpen',
++        color: 'indigo'
++    },
+     {
+         id: 'ADMIN_DAILY_GK',
+         label: 'Daily GK',

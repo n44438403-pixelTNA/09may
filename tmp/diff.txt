@@ -1,0 +1,194 @@
+3c3
+< import { X, Play, BookOpen, CheckCircle, Loader2, Pause, Volume2, SkipForward } from 'lucide-react';
+---
+> import { X, Play, BookOpen, Loader2, Pause, ChevronLeft, CheckCircle } from 'lucide-react';
+21c21
+< export const TodayRevisionView: React.FC<Props> = ({ user, topics, onClose, onComplete }) => {
+---
+> export const WeakAverageNotesView: React.FC<Props> = ({ user, topics, onClose, onComplete }) => {
+34,35c34
+<
+<     // TTS State (Simplified)
+---
+>     // TTS State
+42,52d40
+<     // Categorized Topics (for display)
+<     const [scienceTopics, setScienceTopics] = useState<LoadedTopic[]>([]);
+<     const [socialTopics, setSocialTopics] = useState<LoadedTopic[]>([]);
+<     const [otherTopics, setOtherTopics] = useState<LoadedTopic[]>([]);
+<
+<     // Master Display List (to ensure TTS follows visual order)
+<     const [displayList, setDisplayList] = useState<LoadedTopic[]>([]);
+<
+<     // Topics without Notes (Self Study)
+<     const [missingNoteTopics, setMissingNoteTopics] = useState<LoadedTopic[]>([]);
+<
+106d93
+<                             // If a specific subtopic note wasn't found, default to main chapter content if it exists.
+109d95
+<                             // Fallback to aggregating all topic notes if data.content is insufficient
+131,150c117
+<             setLoadedTopics(loaded);
+<
+<             // Filter: Valid vs Missing
+<             const valid = loaded.filter(t => t.content && t.content.length > 50 && !t.content.includes("Content not available") && !t.content.includes("No specific notes found"));
+<             const missing = loaded.filter(t => !valid.includes(t));
+<
+<             setMissingNoteTopics(missing);
+<
+<             // Group Valid Topics Only
+<             const sci = valid.filter(t => (t.subjectName || '').toLowerCase().includes('science') && !(t.subjectName || '').toLowerCase().includes('social'));
+<             const soc = valid.filter(t => (t.subjectName || '').toLowerCase().includes('social') || (t.subjectName || '').toLowerCase().includes('history') || (t.subjectName || '').toLowerCase().includes('geography'));
+<             const oth = valid.filter(t => !sci.includes(t) && !soc.includes(t));
+<
+<             setScienceTopics(sci);
+<             setSocialTopics(soc);
+<             setOtherTopics(oth);
+<
+<             // Set the master display order (Only Valid Notes)
+<             setDisplayList([...sci, ...soc, ...oth]);
+<
+---
+>             setLoadedTopics(loaded.filter(t => t.content && t.content.length > 50 && !t.content.includes("Content not available") && !t.content.includes("No specific notes found")));
+160,161c127,128
+<         topicRefs.current = topicRefs.current.slice(0, displayList.length);
+<     }, [displayList]);
+---
+>         topicRefs.current = topicRefs.current.slice(0, loadedTopics.length);
+>     }, [loadedTopics]);
+165c132
+<         <div className="fixed inset-0 z-[50] bg-white flex flex-col h-[100dvh] w-screen animate-in slide-in-from-bottom-10 overflow-hidden">
+---
+>         <div className="fixed inset-0 z-[999] bg-white flex flex-col h-[100dvh] w-screen animate-in slide-in-from-right-10 overflow-hidden">
+168c135
+<                 <div className="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+---
+>                 <div className="fixed inset-0 z-[1000] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+179c146
+<                              {topics.map(topic => (
+---
+>                              {loadedTopics.map(topic => (
+202c169
+<                                     const completed = topics.filter(t => completedTopicIds.has(t.id));
+---
+>                                     const completed = loadedTopics.filter(t => completedTopicIds.has(t.id));
+204c171
+<                                     onClose();
+---
+>                                     setShowExitConfirm(false);
+213c180,183
+<                                 onClick={() => onClose()}
+---
+>                                 onClick={() => {
+>                                     setShowExitConfirm(false);
+>                                     onClose();
+>                                 }}
+222c192
+<                                 Cancel (Go Back to Revision)
+---
+>                                 Cancel (Go Back to Notes)
+231,235c201,210
+<                 <div>
+<                     <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+<                         <BookOpen className="text-indigo-600" /> Today's Revision
+<                     </h2>
+<                     <p className="text-xs text-slate-600 font-bold">{topics.length} Topics to Cover</p>
+---
+>                 <div className="flex items-center gap-3">
+>                     <button onClick={() => setShowExitConfirm(true)} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 text-slate-600 transition-colors">
+>                         <ChevronLeft size={20} />
+>                     </button>
+>                     <div>
+>                         <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+>                             <BookOpen className="text-indigo-600" /> Recommended Notes
+>                         </h2>
+>                         <p className="text-xs text-slate-600 font-bold">{loadedTopics.length} Notes Available</p>
+>                     </div>
+248c223
+<                         className={`p-2 rounded-full transition-all ${isPlayingAll ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-indigo-100 text-indigo-600'}`}
+---
+>                         className={`px-4 py-2 rounded-xl transition-all font-bold text-sm flex items-center gap-2 ${isPlayingAll ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-indigo-600 text-white shadow-md hover:bg-indigo-700'}`}
+250,253c225
+<                         {isPlayingAll ? <Pause size={20} /> : <Play size={20} />}
+<                     </button>
+<                     <button onClick={() => setShowExitConfirm(true)} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 text-slate-600 transition-colors">
+<                         <X size={20} />
+---
+>                         {isPlayingAll ? <><Pause size={18} /> Stop Reading</> : <><Play size={18} /> Read All</>}
+263c235,240
+<                         <p className="text-xs font-bold">Loading Revision Content...</p>
+---
+>                         <p className="text-xs font-bold">Loading Notes...</p>
+>                     </div>
+>                 ) : loadedTopics.length === 0 ? (
+>                     <div className="flex flex-col items-center justify-center h-64 text-slate-500">
+>                         <BookOpen size={48} className="mb-4 text-slate-300" />
+>                         <p className="text-sm font-bold">No digital notes found for weak or average topics.</p>
+267c244
+<                         {displayList.map((topic, index) => {
+---
+>                         {loadedTopics.map((topic, index) => {
+270d246
+<                             // Determine Badge Color based on Category (Science/Social/Other)
+300a277,283
+>                                             <button
+>                                                 onClick={() => toggleTopicComplete(topic.id)}
+>                                                 className={`p-2 rounded-full transition-all flex items-center gap-1 shrink-0 ${completedTopicIds.has(topic.id) ? 'bg-green-100 text-green-700 ring-2 ring-green-500' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+>                                                 title={completedTopicIds.has(topic.id) ? "Marked as Completed" : "Mark as Complete"}
+>                                             >
+>                                                 <CheckCircle size={20} />
+>                                             </button>
+303c286
+<                                                 className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
+---
+>                                                 className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 shrink-0"
+308c291
+<                                                         if (next < displayList.length) {
+---
+>                                                         if (next < loadedTopics.length) {
+310d292
+<                                                             // Auto scroll
+319,325d300
+<                                             <button
+<                                                 onClick={() => toggleTopicComplete(topic.id)}
+<                                                 className={`p-2 rounded-full transition-all flex items-center gap-1 ${completedTopicIds.has(topic.id) ? 'bg-green-100 text-green-700 ring-2 ring-green-500' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+<                                                 title={completedTopicIds.has(topic.id) ? "Marked as Completed" : "Mark as Complete"}
+<                                             >
+<                                                 <CheckCircle size={20} />
+<                                             </button>
+339,373d313
+<
+<                 {/* SELF STUDY BOX (Topics without notes) */}
+<                 {!loading && missingNoteTopics.length > 0 && (
+<                     <div className="max-w-7xl mx-auto mt-8 bg-orange-50 border-2 border-orange-100 rounded-2xl p-6">
+<                         <h4 className="font-black text-orange-800 flex items-center gap-2 mb-4">
+<                             <BookOpen size={20} /> Self Study Topics
+<                         </h4>
+<                         <p className="text-xs text-orange-700 mb-4">
+<                             No digital notes found for these topics. Please revise them from your textbooks.
+<                         </p>
+<                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+<                             {missingNoteTopics.map((t, i) => (
+<                                 <div key={i} className="bg-white p-3 rounded-xl border border-orange-100 flex items-center gap-3">
+<                                     <div className="w-2 h-2 rounded-full bg-orange-400"></div>
+<                                     <div>
+<                                         <p className="text-xs font-bold text-slate-700">{t.name}</p>
+<                                         <p className="text-[10px] text-slate-500 uppercase">{t.subjectName}</p>
+<                                     </div>
+<                                 </div>
+<                             ))}
+<                         </div>
+<                     </div>
+<                 )}
+<             </div>
+<
+<             {/* FOOTER ACTIONS */}
+<             <div className="fixed bottom-0 left-0 right-0 w-full mx-auto bg-white border-t border-slate-200 p-4 shadow-2xl flex flex-col sm:flex-row gap-4 items-center justify-center z-30">
+<                 <button
+<                     onClick={() => setShowExitConfirm(true)}
+<                     disabled={loading}
+<                     className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 transition-all"
+<                 >
+<                     <CheckCircle size={20} />
+<                     Complete Revision
+<                 </button>

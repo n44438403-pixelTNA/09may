@@ -1,0 +1,30 @@
+<<<<<<< SEARCH
+  const [activeChallenges20, setActiveChallenges20] = useState<Challenge20[]>([]);
+  const [homeBannerIndex, setHomeBannerIndex] = useState(0);
+
+  useEffect(() => {
+      if (user.classLevel) {
+          getActiveChallenges(user.classLevel as any).then(setActiveChallenges20);
+      }
+  }, [user.classLevel]);
+=======
+  const [activeChallenges20, setActiveChallenges20] = useState<Challenge20[]>([]);
+  const [homeBannerIndex, setHomeBannerIndex] = useState(0);
+
+  useEffect(() => {
+      if (user.classLevel) {
+          getActiveChallenges(user.classLevel as any).then(setActiveChallenges20);
+      }
+  }, [user.classLevel]);
+
+  // Handle Banner Rotation
+  useEffect(() => {
+      const bannerCount = (settings?.globalChallengeMcq?.length ? 1 : 0) + (settings?.dailyGk?.length ? 1 : 0) + activeChallenges20.length;
+      if (bannerCount > 1) {
+          const interval = setInterval(() => {
+              setHomeBannerIndex(prev => (prev + 1) % bannerCount);
+          }, 3000);
+          return () => clearInterval(interval);
+      }
+  }, [settings?.globalChallengeMcq, settings?.dailyGk, activeChallenges20.length]);
+>>>>>>> REPLACE

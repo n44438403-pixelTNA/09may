@@ -1,0 +1,34 @@
+<<<<<<< SEARCH
+              // 1. EXTRACT EXPLICIT <NOTE: > BLOCKS AND HTML NOTES
+              let textForMcq = '';
+              const noteRegex = /<NOTE:\s*(.*?)>([\s\S]*?)<\/NOTE>/gi;
+              let intermediateText = rawText.replace(noteRegex, (match, p1, p2) => {
+                  newTopicNotes.push({
+                      id: `note-${Date.now()}-${generateSecureRandomId(9)}`,
+                      title: `Note: ${p1.trim()}`,
+                      topic: p1.trim(),
+                      content: p2.trim(),
+                      isPremium: false
+                  });
+                  return "";
+              });
+
+              const lines = intermediateText.split('\n');
+=======
+              // 1. EXTRACT EXPLICIT <NOTE: > BLOCKS AND HTML NOTES
+              let textForMcq = '';
+              const noteRegex = /<NOTE:\s*(.*?)>([\s\S]*?)<\/NOTE>/gi;
+              let intermediateText = rawText.replace(noteRegex, (match, p1, p2) => {
+                  const titleClean = p1.trim().replace(/^Note:\s*/i, '');
+                  newTopicNotes.push({
+                      id: `note-${Date.now()}-${generateSecureRandomId(9)}`,
+                      title: `Note: ${titleClean}`,
+                      topic: titleClean,
+                      content: p2.trim(),
+                      isPremium: false
+                  });
+                  return "";
+              });
+
+              const lines = intermediateText.split('\n');
+>>>>>>> REPLACE

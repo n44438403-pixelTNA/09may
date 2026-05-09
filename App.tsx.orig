@@ -1,0 +1,2721 @@
+
+import React, { useState, useEffect } from 'react';
+import {
+  ClassLevel, Subject, Chapter, AppState, Board, Stream, User, ContentType, SystemSettings, ActivityLogEntry, WeeklyTest, LessonContent, ActiveSubscription, InboxMessage
+} from './types';
+import { getChapterData, saveChapterData, checkFirebaseConnection, saveTestResult, saveUserToLive, updateUserStatus, getUserData, subscribeToSettings, subscribeToUser, auth, savePublicActivity, saveUserHistory, getUserSavedNotes } from './firebase';
+import { storage } from './utils/storage';
+import { recalculateSubscriptionStatus, addSubscription } from './utils/subscriptionUtils';
+import { signInAnonymously } from 'firebase/auth';
+import { fetchChapters, fetchLessonContent } from './services/groq';
+import { AppLoadingScreen } from './components/AppLoadingScreen';
+import { Onboarding }
+from './components/Onboarding';
+import { BoardSelection } from './components/BoardSelection';
+import { ClassSelection } from './components/ClassSelection';
+import { SubjectSelection } from './components/SubjectSelection';
+import { ChapterSelection } from './components/ChapterSelection';
+import { StreamSelection } from './components/StreamSelection';
+import { LessonView } from './components/LessonView';
+import { Auth } from './components/Auth';
+import { AdminDashboard } from './components/AdminDashboard';
+import { StudentDashboard } from './components/StudentDashboard';
+import { AudioStudio } from './components/AudioStudio';
+import { PremiumModal } from './components/PremiumModal';
+import { LoadingOverlay } from './components/LoadingOverlay';
+import { RulesPage } from './components/RulesPage';
+import { IICPage } from './components/IICPage';
+import { WeeklyTestView } from './components/WeeklyTestView';
+import { RewardPopup } from './components/RewardPopup';
+import { CreditConfirmationModal } from './components/CreditConfirmationModal';
+import { CustomAlert, CustomConfirm } from './components/CustomDialogs';
+import { MarksheetCard } from './components/MarksheetCard';
+// import { DailyChallengePopup } from './components/DailyChallengePopup';
+import { UpdatePopup } from './components/UpdatePopup'; // NEW
+import { ErrorBoundary } from './components/ErrorBoundary'; // NEW
+import { generateDailyChallengeQuestions } from './utils/challengeGenerator';
+import { BrainCircuit, Globe, LogOut, LayoutDashboard, BookOpen, Headphones, HelpCircle, Newspaper, KeyRound, Lock, X, ShieldCheck, FileText, UserPlus, EyeOff, WifiOff, Cloud } from 'lucide-react';
+import { SUPPORT_EMAIL, APP_VERSION } from './constants';
+import { StudentTab, PendingReward, MCQResult, SubscriptionHistoryEntry } from './types';
+
+const TermsPopup: React.FC<{ onClose: () => void, text?: string }> = ({ onClose, text }) => (
+    <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4 animate-in fade-in duration-300">
+        <div className="bg-white w-full max-w-lg md:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-white p-6 border-b border-slate-100 flex justify-between items-center sticky top-0 z-10">
+                <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                    <FileText className="text-[var(--primary)]" /> Terms & Conditions
+                </h3>
+            </div>
+            <div className="p-6 overflow-y-auto space-y-4 text-sm text-slate-600 leading-relaxed custom-scrollbar whitespace-pre-wrap">
+                <p className="text-slate-900 font-medium">Please read carefully before using NST AI Assistant.</p>
+                <p>{text || "By continuing, you agree to abide by these rules and the standard terms of service."}</p>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-white sticky bottom-0 z-10">
+                <button onClick={onClose} className="w-full bg-[var(--primary)] hover:opacity-90 text-white font-bold py-3.5 rounded-xl shadow-lg transition-all active:scale-95">I Agree & Continue</button>
+            </div>
+        </div>
+    </div>
+);
+
+const App: React.FC = () => {
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isAppLoading, setIsAppLoading] = useState(() => sessionStorage.getItem('nst_has_loaded') !== 'true');
+
+  useEffect(() => {
+    if (!isAppLoading) {
+      sessionStorage.setItem('nst_has_loaded', 'true');
+    }
+  }, [isAppLoading]);
+
+  // TESTING OVERRIDE: Render component directly bypassing auth
+  useEffect(() => {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('mock') === 'pdf_view') {
+          // Force view into PDF View mock
+          setState(prev => ({
+              ...prev,
+              user: {
+                 id: "mock-teacher",
+                 role: "TEACHER",
+                 name: "Prof. Smith",
+                 isPremium: true,
+                 profileCompleted: true
+              } as any,
+              view: 'LESSON',
+              selectedBoard: 'CBSE',
+              selectedClass: '10',
+              selectedSubject: { id: "sub", name: "Science", icon: "Flask" } as any,
+              selectedChapter: { id: "chap", title: "Photosynthesis", isLocked: false } as any,
+              lessonContent: {
+                 id: "lesson",
+                 type: "NOTES_HTML_FREE",
+                 title: "Photosynthesis",
+                 subjectName: "Science",
+                 dateCreated: new Date().toISOString(),
+                 content: "Test notes"
+              } as any
+          }));
+      } else if (urlParams.get('mock') === 'custom_page') {
+          setState(prev => ({
+              ...prev,
+              user: {
+                 id: "mock-student",
+                 name: "Mock Student",
+                 role: "STUDENT",
+                 isPremium: true
+              } as any,
+              settings: {
+                 appName: "IIC",
+                 customBloggerVideoUrl: "https://drive.google.com/file/d/1BxdxX9y4jJzQhR_tF6yE5eN3lPz9sZqT/view"
+              } as any,
+              view: 'STUDENT_DASHBOARD'
+          }));
+      } else if (urlParams.get('mock') === 'marksheet') {
+          // Dummy data to trigger the MarksheetCard
+          setLastTestResult({
+              id: "mock-result-123",
+              userId: "mock-user",
+              chapterId: "mock-chapter",
+              chapterTitle: "Thermodynamics Theory & Numerical Application",
+              subjectId: "Physics",
+              score: 8,
+              total: 10,
+              totalQuestions: 10,
+              correctCount: 8,
+              wrongCount: 2,
+              totalTimeSeconds: 150,
+              timeTaken: 150,
+              averageTimePerQuestion: 15,
+              performanceTag: "EXCELLENT",
+              date: new Date().toISOString(),
+              userAnswers: { 0: 1, 1: 0, 2: 2, 3: 1 },
+              wrongQuestions: [
+                  { qIndex: 1, question: "What is the first law of thermodynamics?" },
+                  { qIndex: 3, question: "Calculate the entropy change for the reversible process." }
+              ],
+              topicAnalysis: {
+                  "First Law": { total: 4, correct: 3, percentage: 75 },
+                  "Entropy": { total: 6, correct: 5, percentage: 83 }
+              }
+          });
+
+          setState(prev => ({
+              ...prev,
+              user: {
+                 id: "mock-user",
+                 role: "STUDENT",
+                 name: "Jules (Testing)",
+                 isPremium: true,
+                 profileCompleted: true
+              } as any
+          }));
+      }
+  }, []);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nst_dark_mode') === 'true');
+
+  // ABANDONMENT DISCOUNT STATE
+  const [isFlashSaleActive, setIsFlashSaleActive] = useState(false);
+
+  useEffect(() => {
+      // Check Discount Logic Periodically
+      const checkDiscount = () => {
+          const lastVisitStr = localStorage.getItem('nst_store_last_visit');
+          if (lastVisitStr) {
+              const lastVisit = parseInt(lastVisitStr);
+              const now = Date.now();
+              const oneHour = 60 * 60 * 1000;
+              const twoHours = 2 * 60 * 60 * 1000;
+
+              // Active if > 1 hour AND < 2 hours from visit
+              if (now > (lastVisit + oneHour) && now < (lastVisit + twoHours)) {
+                  setIsFlashSaleActive(true);
+                  // Trigger Notification ONCE per session/activation
+                  const alertKey = `nst_flash_alert_${lastVisit}`;
+                  if (!sessionStorage.getItem(alertKey)) {
+                      setAlertConfig({
+                          isOpen: true,
+                          message: "🔥 Flash Sale Activated! Complete your purchase now for an extra discount!"
+                      });
+                      sessionStorage.setItem(alertKey, 'true');
+                  }
+              } else {
+                  setIsFlashSaleActive(false);
+              }
+          }
+      };
+
+      checkDiscount(); // Initial
+      const interval = setInterval(checkDiscount, 60000); // Check every minute
+      return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+      // Clean up any old mode classes before applying the new one.
+      document.documentElement.classList.remove('dark-mode', 'dark-mode-blue', 'dark-mode-black');
+      if (darkMode) {
+         // Default to Black AMOLED if not set.
+         const themeType = localStorage.getItem('nst_dark_theme_type') || 'black';
+         document.documentElement.classList.add('dark-mode');
+         document.documentElement.classList.add(themeType === 'blue' ? 'dark-mode-blue' : 'dark-mode-black');
+      }
+      localStorage.setItem('nst_dark_mode', darkMode.toString());
+  }, [darkMode]);
+
+  const [state, setState] = useState<AppState>({
+    user: null,
+    originalAdmin: null,
+    view: 'BOARDS',
+    selectedBoard: null,
+    selectedClass: null,
+    selectedStream: null,
+    selectedSubject: null,
+    selectedChapter: null,
+    chapters: [],
+    lessonContent: null,
+    loading: false,
+    error: null,
+    language: 'English',
+    showWelcome: false,
+    globalMessage: null,
+    settings: {
+        appName: 'IIC',
+        appShortName: 'IIC',
+        aiName: 'IIC AI',
+        themeColor: '#3b82f6',
+        maintenanceMode: false,
+        maintenanceMessage: 'We are upgrading our servers. Please check back later.',
+        customCSS: '',
+        apiKeys: [],
+        welcomeTitle: 'Unlock Smart Learning',
+        welcomeMessage: 'Experience the power of AI-driven education. Our AI filters out the noise of traditional textbooks to deliver only the essential, high-yield topics you need for success. Study smarter, not harder.',
+        marqueeLines: ["Welcome to Leon karo Classes", "Learn Smart", "Contact Admin for Credits"],
+        liveMessage1: 'Experience the power of AI-driven education.',
+        liveMessage2: 'Start learning today!',
+        bannerConfig: {
+            top: { text: 'Experience the power of AI-driven education.', enabled: true, autoHideSeconds: 0, bgColor: '#dc2626', textColor: '#ffffff' },
+            bottom: { text: 'Start learning today!', enabled: true, autoHideSeconds: 0, bgColor: '#2563eb', textColor: '#ffffff' }
+        },
+        wheelRewards: [
+            { id: '1', type: 'COINS', amount: 0, label: '0 Coins', value: 0 },
+            { id: '2', type: 'COINS', amount: 1, label: '1 Coin', value: 1 },
+            { id: '3', type: 'COINS', amount: 2, label: '2 Coins', value: 2 },
+            { id: '4', type: 'COINS', amount: 5, label: '5 Coins', value: 5 }
+        ] as any,
+        chatCost: 1,
+        dailyReward: 3,
+        signupBonus: 2,
+        isChatEnabled: true,
+        isGameEnabled: true,
+        allowSignup: true,
+        loginMessage: '',
+        allowedClasses: ['6','7','8','9','10','11','12'],
+        storageCapacity: '100 GB',
+        isPaymentEnabled: true,
+        upiId: '',
+        upiName: '',
+        qrCodeUrl: '',
+        paymentInstructions: '',
+        supportEmail: 'nadiman0636indo@gmail.com',
+        footerText: '',
+        showFooter: true,
+        footerColor: '',
+        packages: [
+            { id: 'pkg-1', name: 'Starter Pack', price: 100, credits: 150 },
+            { id: 'pkg-2', name: 'Value Pack', price: 200, credits: 350 },
+            { id: 'pkg-3', name: 'Pro Pack', price: 500, credits: 1500 },
+            { id: 'pkg-4', name: 'Ultra Pack', price: 1000, credits: 3000 },
+            { id: 'pkg-5', name: 'Mega Pack', price: 2000, credits: 7000 },
+            { id: 'pkg-6', name: 'Giga Pack', price: 3000, credits: 12000 },
+            { id: 'pkg-7', name: 'Ultimate Pack', price: 5000, credits: 20000 }
+        ],
+        subscriptionPlans: [
+            { id: 'weekly', name: 'Weekly', duration: '7 days', basicPrice: 49, basicOriginalPrice: 99, ultraPrice: 79, ultraOriginalPrice: 149, features: ['Premium Content'], popular: false },
+            { id: 'monthly', name: 'Monthly', duration: '30 days', basicPrice: 149, basicOriginalPrice: 299, ultraPrice: 199, ultraOriginalPrice: 399, features: ['Everything in Weekly', 'Live Chat'], popular: true },
+            { id: 'quarterly', name: 'Quarterly', duration: '3 months', basicPrice: 399, basicOriginalPrice: 799, ultraPrice: 499, ultraOriginalPrice: 999, features: ['Everything in Monthly', 'Priority Support'], popular: false },
+            { id: 'yearly', name: 'Yearly', duration: '365 days', basicPrice: 999, basicOriginalPrice: 1999, ultraPrice: 1499, ultraOriginalPrice: 2999, features: ['Everything in Quarterly', 'Priority Support'], popular: false },
+            { id: 'lifetime', name: 'Lifetime', duration: 'Forever', basicPrice: 4999, basicOriginalPrice: 9999, ultraPrice: 7499, ultraOriginalPrice: 14999, features: ['VIP Status'], popular: true }
+        ],
+        startupAd: {
+            enabled: false,
+            duration: 2,
+            title: "Premium Features",
+            features: ["AI Notes Generator", "MCQ Practice", "Live Chat Support"],
+            bgColor: "#1e293b",
+            textColor: "#ffffff"
+        },
+        engagementRewards: [
+            { id: 'def-1', seconds: 600, type: 'COINS', amount: 2, label: '10 Mins Study: 2 Coins', enabled: true },
+            { id: 'def-2', seconds: 1800, type: 'COINS', amount: 4, label: '30 Mins Study: 4 Coins', enabled: true },
+            { id: 'def-3', seconds: 3600, type: 'SUBSCRIPTION', subTier: 'WEEKLY', subLevel: 'BASIC', durationHours: 4, label: '1 Hour Study: Free Basic Sub (4h)', enabled: true },
+            { id: 'def-4', seconds: 7200, type: 'SUBSCRIPTION', subTier: 'LIFETIME', subLevel: 'ULTRA', durationHours: 4, label: '2 Hours Study: Free Ultra Sub (4h)', enabled: true }
+        ],
+        prizeRules: [
+            { id: 'def-daily', category: 'DAILY_CHALLENGE', minQuestions: 0, minPercentage: 90, rewardType: 'SUBSCRIPTION', rewardSubTier: 'MONTHLY', rewardSubLevel: 'ULTRA', rewardDurationHours: 720, label: 'Score 90% in Daily Challenge', enabled: true },
+            { id: 'def-weekly', category: 'WEEKLY_TEST', minQuestions: 0, minPercentage: 0, rewardType: 'SUBSCRIPTION', rewardSubTier: 'WEEKLY', rewardSubLevel: 'BASIC', rewardDurationHours: 24, label: 'Participate in Weekly Test', enabled: true }
+        ]
+    }
+  });
+
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [tempSelectedChapter, setTempSelectedChapter] = useState<Chapter | null>(null);
+  const [showTerms, setShowTerms] = useState(false);
+  const [generationDataReady, setGenerationDataReady] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false); // NEW
+  const [loadingMessage, setLoadingMessage] = useState<string>(''); // NEW
+  const [activeWeeklyTest, setActiveWeeklyTest] = useState<WeeklyTest | null>(null);
+  const [studentTab, setStudentTab] = useState<StudentTab>('HOME');
+
+  // BANNER STATE
+  const [showTopBanner, setShowTopBanner] = useState(true);
+  const [showBottomBanner, setShowBottomBanner] = useState(true);
+
+  // BANNER AUTO-HIDE LOGIC
+  useEffect(() => {
+      const top = state.settings.bannerConfig?.top;
+      if (top?.enabled && top.autoHideSeconds > 0) {
+          const timer = setTimeout(() => setShowTopBanner(false), top.autoHideSeconds * 1000);
+          return () => clearTimeout(timer);
+      } else {
+          setShowTopBanner(true);
+      }
+  }, [state.settings.bannerConfig?.top?.autoHideSeconds, state.settings.bannerConfig?.top?.enabled]);
+
+  useEffect(() => {
+      const bottom = state.settings.bannerConfig?.bottom;
+      if (bottom?.enabled && bottom.autoHideSeconds > 0) {
+          const timer = setTimeout(() => setShowBottomBanner(false), bottom.autoHideSeconds * 1000);
+          return () => clearTimeout(timer);
+      } else {
+          setShowBottomBanner(true);
+      }
+  }, [state.settings.bannerConfig?.bottom?.autoHideSeconds, state.settings.bannerConfig?.bottom?.enabled]);
+
+  useEffect(() => {
+    storage.getItem<StudentTab>('nst_active_student_tab').then(saved => {
+        if (saved) setStudentTab(saved);
+    });
+  }, []);
+
+  useEffect(() => {
+    storage.setItem('nst_active_student_tab', studentTab);
+  }, [studentTab]);
+  const [activeReward, setActiveReward] = useState<PendingReward | null>(null);
+  const [lastTestResult, setLastTestResult] = useState<MCQResult | null>(null);
+  const [lastTestQuestions, setLastTestQuestions] = useState<MCQItem[] | null>(null); // NEW: For granular analysis
+
+  // CUSTOM DIALOG STATE (GLOBAL)
+  const [alertConfig, setAlertConfig] = useState<{isOpen: boolean, message: string}>({isOpen: false, message: ''});
+  const [confirmConfig, setConfirmConfig] = useState<{isOpen: boolean, title: string, message: string, onConfirm: () => void}>({isOpen: false, title: '', message: '', onConfirm: () => {}});
+
+  // CREDIT CONFIRMATION STATE
+  const [creditModal, setCreditModal] = useState<{
+      isOpen: boolean;
+      cost: number;
+      title: string;
+      onConfirm: (autoEnabled: boolean) => void;
+  } | null>(null);
+
+  // GLOBAL STUDY TIMER
+  const [dailyStudySeconds, setDailyStudySeconds] = useState(0);
+
+  // FULL SCREEN MODE (Hides Header/Footer/Dock)
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [popupQueue, setPopupQueue] = useState<('TRACKER' | 'CHALLENGE' | 'WELCOME')[]>([]);
+  const [showUpdatePopup, setShowUpdatePopup] = useState(false); // NEW
+  const [loadingContentType, setLoadingContentType] = useState<ContentType | undefined>(undefined); // NEW
+  const [mCode, setMCode] = useState(''); // MAINTENANCE MODE
+
+  // --- VERSION CONTROL INIT ---
+  useEffect(() => {
+      const storedVersion = localStorage.getItem('nst_app_version');
+      // If no version stored, OR if the Code Version (APP_VERSION) is newer/different than stored,
+      // update the storage. This handles the case where user installs a new update.
+      if (!storedVersion || storedVersion !== APP_VERSION) {
+          // console.log(`Updating Local Version: ${storedVersion} -> ${APP_VERSION}`);
+          localStorage.setItem('nst_app_version', APP_VERSION);
+      }
+  }, []);
+
+  // --- AUTO CLEANUP GROQ KEYS ---
+  useEffect(() => {
+      const deletedKeys = state.settings.deletedGroqKeys || [];
+      if (deletedKeys.length > 0) {
+          const now = Date.now();
+          const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+          const newDeletedKeys = deletedKeys.filter(k => (now - k.deletedAt) <= ninetyDaysMs);
+
+          if (newDeletedKeys.length !== deletedKeys.length) {
+              // console.log("Cleaned up old Groq keys");
+              const updatedSettings = { ...state.settings, deletedGroqKeys: newDeletedKeys };
+              setState(prev => ({ ...prev, settings: updatedSettings }));
+              localStorage.setItem('nst_system_settings', JSON.stringify(updatedSettings));
+          }
+      }
+  }, [state.settings.deletedGroqKeys]);
+
+  // --- REWARD CHECKER (Login & Pending) ---
+  const recordActivity = (type: UsageHistoryEntry['type'], itemTitle: string, amount?: number, extra?: any) => {
+    if (!state.user) return;
+    const entry: UsageHistoryEntry = {
+        id: `act-${Date.now()}`,
+        type,
+        itemId: extra?.itemId || 'internal',
+        itemTitle,
+        subject: extra?.subject || 'General',
+        amount: amount || 0,
+        timestamp: new Date().toISOString(),
+        ...extra
+    };
+    const updatedUser = {
+        ...state.user,
+        usageHistory: [entry, ...(state.user.usageHistory || [])].slice(0, 100)
+    };
+    setState(prev => ({ ...prev, user: updatedUser }));
+    saveUserToLive(updatedUser);
+  };
+
+  useEffect(() => {
+    (window as any).recordActivity = recordActivity;
+  }, [state.user?.id]);
+
+  useEffect(() => {
+      if (!state.user) return;
+      const today = new Date().toDateString();
+      const now = new Date();
+      let updatedUser = { ...state.user };
+      let hasUpdates = false;
+      let newReward: PendingReward | null = null;
+
+      // STREAK LOGIC (Strict Date Comparison)
+      const lastLoginRaw = state.user.lastLoginDate ? new Date(state.user.lastLoginDate) : null;
+      const lastLoginDateString = lastLoginRaw ? lastLoginRaw.toDateString() : '';
+
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      // Update Login Date if not today
+      if (lastLoginDateString !== today) {
+          updatedUser.lastLoginDate = new Date().toISOString();
+          hasUpdates = true;
+
+          if (lastLoginDateString === yesterday.toDateString()) {
+              // Consecutive Login: Increment
+              updatedUser.streak = (updatedUser.streak || 0) + 1;
+          } else {
+              // Streak Broken or First Login: Reset
+              updatedUser.streak = 1;
+          }
+      }
+
+      // 1. Daily Login Bonus (Configurable)
+      const lastRewardDate = state.user.lastLoginRewardDate ? new Date(state.user.lastLoginRewardDate).toDateString() : '';
+      if (lastRewardDate !== today && !activeReward && !sessionStorage.getItem('nst_daily_reward_checked')) {
+          sessionStorage.setItem('nst_daily_reward_checked', 'true'); // Prevent double-firing
+          // Check Streak for Strict Mode
+          let streakBroken = false;
+          if (state.user.lastLoginDate && lastLoginDateString !== yesterday.toDateString() && lastLoginDateString !== today) {
+              streakBroken = true;
+          }
+
+          if (state.settings.loginBonusConfig?.strictStreak && streakBroken) {
+              // Reset Streak logic handled in updateUserStatus usually, but here we enforce penalty
+              // User request: "strict katega tab next day bonus nahi mikega" -> If streak broken, NO BONUS TODAY
+              updatedUser.lastLoginRewardDate = new Date().toISOString(); // Mark as checked
+              hasUpdates = true;
+              // No reward set
+          } else {
+              // Grant Bonus based on Tier
+              let bonusAmount = state.settings.loginBonusConfig?.freeBonus ?? 2;
+              if (state.user.subscriptionTier !== 'FREE') {
+                  if (state.user.subscriptionLevel === 'BASIC') bonusAmount = state.settings.loginBonusConfig?.basicBonus ?? 5;
+                  if (state.user.subscriptionLevel === 'ULTRA') bonusAmount = state.settings.loginBonusConfig?.ultraBonus ?? 10;
+              }
+
+              // DO NOT increment credits or update date here yet. Wait for handleClaimReward.
+              // updatedUser.credits = (updatedUser.credits || 0) + bonusAmount;
+              // updatedUser.lastLoginRewardDate = new Date().toISOString();
+              // Just generate the activeReward payload.
+
+              hasUpdates = true;
+
+              newReward = {
+                  id: `login-bonus-${today}`,
+                  type: 'COINS',
+                  amount: bonusAmount,
+                  label: 'Daily Login Bonus',
+                  expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+              };
+          }
+      }
+
+      // 2. Check Pending Unlocks (Prizes)
+      // Only if no new reward set (priority to Login Bonus, next render will handle Prize)
+      if (!newReward && !activeReward && updatedUser.pendingRewards && updatedUser.pendingRewards.length > 0) {
+          const unlockIndex = updatedUser.pendingRewards.findIndex(r => !r.unlockDate || new Date(r.unlockDate) <= now);
+
+          if (unlockIndex !== -1) {
+              const item = updatedUser.pendingRewards[unlockIndex];
+              newReward = item;
+
+              // Remove from pending list (it moved to Active Popup)
+              const newPending = [...updatedUser.pendingRewards];
+              newPending.splice(unlockIndex, 1);
+              updatedUser.pendingRewards = newPending;
+              hasUpdates = true;
+          }
+      }
+
+      if (hasUpdates || newReward) {
+          if (hasUpdates) {
+              // SAFE IMPERSONATION: Only save if NOT impersonating
+              if (!state.originalAdmin) {
+                  localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+                  saveUserToLive(updatedUser);
+              }
+              setState(prev => ({...prev, user: updatedUser}));
+          }
+          if (newReward) {
+              setActiveReward(newReward);
+          }
+      }
+  }, [state.user?.id, state.user?.lastLoginRewardDate, activeReward, state.originalAdmin]); // Re-run when user or activeReward changes
+
+  // --- ONLINE/OFFLINE DETECTOR & SYNC ---
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Initial Sync Check
+    if (navigator.onLine) handleOnline();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Background Sync Logic
+  useEffect(() => {
+      if (isOnline) {
+          const pendingStr = localStorage.getItem('nst_pending_sync_results');
+          if (pendingStr) {
+              try {
+                  const pending = JSON.parse(pendingStr);
+                  if (Array.isArray(pending) && pending.length > 0) {
+                      // console.log(`Syncing ${pending.length} offline results...`);
+                      pending.forEach(async (item) => {
+                          if (item.type === 'HISTORY') {
+                              await saveUserHistory(item.userId, item.data);
+                          }
+                      });
+                      localStorage.removeItem('nst_pending_sync_results');
+                      setAlertConfig({isOpen: true, message: "Offline results synced successfully!"});
+                  }
+              } catch (e) {
+                  console.error("Sync failed", e);
+              }
+          }
+      }
+  }, [isOnline]);
+
+  // --- LIVE SETTINGS & USER SYNC (REALTIME) ---
+  useEffect(() => {
+      let unsubscribeUser: (() => void) | undefined;
+
+      if (state.user && !state.originalAdmin) {
+          unsubscribeUser = subscribeToUser(state.user.id, (cloudUser) => {
+              if (cloudUser) {
+                  setState(prev => {
+                      if (!prev.user) return prev;
+
+                      // Merge bulky data carefully, preventing overwrite of local array history if cloud hasn't synced
+                      // but prioritizing core profile updates (credits, subscriptions)
+                      const localHistoryLen = prev.user.mcqHistory?.length || 0;
+                      const cloudHistoryLen = cloudUser.mcqHistory?.length || 0;
+
+                      let finalHistory = cloudUser.mcqHistory;
+                      let finalTests = cloudUser.testResults;
+
+                      if (localHistoryLen > cloudHistoryLen) {
+                          finalHistory = prev.user.mcqHistory;
+                          finalTests = prev.user.testResults;
+                      }
+
+                      const mergedUser = { ...prev.user, ...cloudUser, mcqHistory: finalHistory, testResults: finalTests };
+
+                      // PRESERVE ADMIN OVERRIDES (Fix for White Screen demotion)
+                      if (prev.user.role === 'ADMIN' && cloudUser.role !== 'ADMIN') {
+                          mergedUser.role = 'ADMIN';
+                      }
+                      if (prev.user.role === 'SUB_ADMIN' && cloudUser.role !== 'SUB_ADMIN' && cloudUser.role !== 'ADMIN') {
+                          mergedUser.role = 'SUB_ADMIN';
+                      }
+
+                      if (JSON.stringify(prev.user) !== JSON.stringify(mergedUser)) {
+                          localStorage.setItem('nst_current_user', JSON.stringify(mergedUser));
+                          return { ...prev, user: mergedUser };
+                      }
+                      return prev;
+                  });
+              }
+          });
+      }
+
+      // Subscribe to Firebase Settings Updates
+      const unsubscribeSettings = subscribeToSettings((newSettings) => {
+          if (newSettings) {
+              setState(prev => {
+                  const hasChanges = JSON.stringify(prev.settings) !== JSON.stringify({...prev.settings, ...newSettings});
+                  if (hasChanges) {
+                      localStorage.setItem('nst_system_settings', JSON.stringify(newSettings));
+                      return {...prev, settings: {...prev.settings, ...newSettings}};
+                  }
+                  return prev;
+              });
+
+              // FORCE REFRESH LOGIC
+              if (newSettings.forceRefreshTimestamp) {
+                  const lastRefresh = localStorage.getItem('nst_last_refresh_ts');
+                  if (lastRefresh !== newSettings.forceRefreshTimestamp) {
+                      localStorage.setItem('nst_last_refresh_ts', newSettings.forceRefreshTimestamp);
+                      window.location.reload();
+                  }
+              }
+
+              // VERSION CHECK LOGIC
+              const currentVersion = localStorage.getItem('nst_app_version') || APP_VERSION;
+              if (newSettings.latestVersion && newSettings.latestVersion !== currentVersion) {
+                  if (newSettings.latestVersion > currentVersion) {
+                      const now = Date.now();
+                      let isUpdateAvailable = true;
+
+                      // 1. Check Launch Date
+                      if (newSettings.launchDate) {
+                          const launchTime = new Date(newSettings.launchDate).getTime();
+                          if (now < launchTime) isUpdateAvailable = false;
+                      }
+
+                      if (isUpdateAvailable) {
+                          let shouldShow = false;
+
+                          // A. Calculate Deadline for FORCE UPDATE
+                          let deadline = 0;
+
+                          // Use Launch Date if available, else First Seen
+                          let referenceTime = newSettings.launchDate ? new Date(newSettings.launchDate).getTime() : 0;
+
+                          if (!referenceTime) {
+                              // If no launch date, use first seen logic
+                              const key = `nst_update_first_seen_${newSettings.latestVersion}`;
+                              const firstSeen = localStorage.getItem(key);
+                              if (!firstSeen) {
+                                  referenceTime = now;
+                                  localStorage.setItem(key, now.toString());
+                              } else {
+                                  referenceTime = parseInt(firstSeen);
+                              }
+                          }
+
+                          // Calculate Grace Duration
+                          let graceDuration = 0;
+                          if (newSettings.updateGracePeriod) {
+                              graceDuration = (newSettings.updateGracePeriod.days * 24 * 60 * 60 * 1000) +
+                                              (newSettings.updateGracePeriod.hours * 60 * 60 * 1000) +
+                                              (newSettings.updateGracePeriod.minutes * 60 * 1000) +
+                                              (newSettings.updateGracePeriod.seconds * 1000);
+                          } else {
+                              graceDuration = (newSettings.updateGracePeriodDays || 7) * 24 * 60 * 60 * 1000;
+                          }
+
+                          deadline = referenceTime + graceDuration;
+
+                          // If Expired => FORCE SHOW (Always)
+                          if (now >= deadline) {
+                              shouldShow = true;
+                          } else {
+                              // If NOT Expired => Check Frequency (Recurrence)
+                              const lastDismissedStr = localStorage.getItem(`nst_update_dismissed_${newSettings.latestVersion}`);
+                              if (!lastDismissedStr) {
+                                  shouldShow = true; // First time seeing it (since dismissal reset)
+                              } else {
+                                  const lastDismissed = parseInt(lastDismissedStr);
+                                  let freqDuration = 0;
+
+                                  if (newSettings.updatePopupFrequency) {
+                                      const { value, unit } = newSettings.updatePopupFrequency;
+                                      const multipliers: Record<string, number> = {
+                                          seconds: 1000,
+                                          minutes: 60 * 1000,
+                                          hours: 60 * 60 * 1000,
+                                          days: 24 * 60 * 60 * 1000,
+                                          months: 30 * 24 * 60 * 60 * 1000,
+                                          years: 365 * 24 * 60 * 60 * 1000
+                                      };
+                                      freqDuration = value * (multipliers[unit] || multipliers.hours);
+                                  } else {
+                                      // Default to every 6 hours if not configured
+                                      freqDuration = 6 * 60 * 60 * 1000;
+                                  }
+
+                                  if (now - lastDismissed >= freqDuration) {
+                                      shouldShow = true;
+                                  }
+                              }
+                          }
+
+                          if (shouldShow) setShowUpdatePopup(true);
+                      }
+                  }
+              }
+          }
+      });
+      return () => {
+          if (unsubscribeSettings) unsubscribeSettings();
+          if (unsubscribeUser) unsubscribeUser();
+      };
+  }, [state.user?.id, state.originalAdmin]);
+
+  // --- SYNC USER PROFILE ON LOAD (ENSURE PREMIUM UPDATE VISIBLE) ---
+  useEffect(() => {
+      if (state.user && !state.originalAdmin) {
+          // Sync Saved Notes History First
+          getUserSavedNotes(state.user.id).then(async savedNotes => {
+              if (savedNotes && savedNotes.length > 0) {
+                  // Sort them chronologically and ensure they are populated
+                  savedNotes.sort((a: any, b: any) => new Date(a.dateCreated || a.date || 0).getTime() - new Date(b.dateCreated || b.date || 0).getTime());
+                  await storage.setItem('nst_user_history', savedNotes);
+              }
+          });
+
+          getUserData(state.user.id).then(fetchedCloudUser => {
+             if (fetchedCloudUser) {
+                 // Check if cloud has more mcqHistory than local
+                 const localHistoryLen = state.user?.mcqHistory?.length || 0;
+                 const cloudHistoryLen = fetchedCloudUser.mcqHistory?.length || 0;
+
+                 // If cloud has more data, store it for potential recovery but don't auto-merge
+                 if (cloudHistoryLen > localHistoryLen) {
+                     setCloudUser(fetchedCloudUser);
+                     setShowCloudRecoveryModal(true);
+                 } else {
+                     // If safe to merge (just profile updates, no history loss)
+                     const currentStr = JSON.stringify(state.user);
+                     const cloudStr = JSON.stringify(fetchedCloudUser);
+                     if (currentStr !== cloudStr) {
+                         const mergedUser = { ...state.user, ...fetchedCloudUser };
+
+                         // PRESERVE ADMIN OVERRIDES (Fix for White Screen demotion)
+                         if (state.user?.role === 'ADMIN' && fetchedCloudUser.role !== 'ADMIN') {
+                             mergedUser.role = 'ADMIN';
+                         }
+                         if (state.user?.role === 'SUB_ADMIN' && fetchedCloudUser.role !== 'SUB_ADMIN' && fetchedCloudUser.role !== 'ADMIN') {
+                             mergedUser.role = 'SUB_ADMIN';
+                         }
+
+                         localStorage.setItem('nst_current_user', JSON.stringify(mergedUser));
+                         setState(prev => ({...prev, user: mergedUser}));
+                     }
+                 }
+             }
+          });
+      }
+  }, [state.user?.id, state.originalAdmin]);
+
+  // --- REAL-TIME SUBSCRIPTION CHECK & NOTIFICATIONS ---
+  useEffect(() => {
+      if (!state.user?.isPremium && !state.user?.subscriptionEndDate) return; // Only check if supposedly premium or has date
+      if (state.user?.role === 'ADMIN' || state.user?.role === 'SUB_ADMIN' || state.originalAdmin) return; // PROTECT ADMIN
+
+      const checkExpiry = () => {
+          // 1. Recalculate Status (Handles expirations and best tier logic)
+          const updatedUser = recalculateSubscriptionStatus(state.user!, state.settings);
+
+          // Detect Change (Downgrade or Expiry)
+          const wasPremium = state.user!.isPremium;
+          const isNowPremium = updatedUser.isPremium;
+
+          if (JSON.stringify(updatedUser) !== JSON.stringify(state.user)) {
+               // console.log("Subscription Status Updated (Real-time).");
+               localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+               saveUserToLive(updatedUser);
+
+               // Handle Expiry Event (Access Lock)
+               if (wasPremium && !isNowPremium) {
+                   const freeModes = state.settings.appMode?.allowedModesForFree || ['SCHOOL'];
+                   let nextView = state.view;
+                   let nextClass = state.selectedClass;
+
+                   if (state.selectedClass === 'COMPETITION' && !freeModes.includes('COMPETITION')) {
+                       nextView = 'CLASSES';
+                       nextClass = null;
+                   }
+
+                   setState(prev => ({
+                       ...prev,
+                       user: updatedUser,
+                       view: nextView as any,
+                       selectedClass: nextClass
+                   }));
+                   setAlertConfig({isOpen: true, message: "Your subscription has expired. Premium features are locked."});
+               } else {
+                   // Just update state silently
+                   setState(prev => ({...prev, user: updatedUser}));
+               }
+          }
+
+          // Note: Expiry warning logic has been migrated and expanded in StudentDashboard.tsx
+          // based on settings.popupConfigs. Removing it from App.tsx to prevent duplicate/competing popups.
+      };
+
+      const interval = setInterval(checkExpiry, 60000); // Check every minute
+      return () => clearInterval(interval);
+  }, [state.user, state.originalAdmin]);
+
+  useEffect(() => {
+      let loadedSettings = state.settings;
+      const storedSettings = localStorage.getItem('nst_system_settings');
+      if (storedSettings) {
+          try {
+              const parsed = JSON.parse(storedSettings);
+              loadedSettings = { ...state.settings, ...parsed };
+
+              // BACKFILL BANNER CONFIG IF MISSING
+              if (!loadedSettings.bannerConfig) {
+                  loadedSettings.bannerConfig = {
+                      top: { text: loadedSettings.liveMessage1 || 'Experience the power of AI-driven education.', enabled: !!loadedSettings.liveMessage1, autoHideSeconds: 0, bgColor: '#dc2626', textColor: '#ffffff' },
+                      bottom: { text: loadedSettings.liveMessage2 || 'Start learning today!', enabled: !!loadedSettings.liveMessage2, autoHideSeconds: 0, bgColor: '#2563eb', textColor: '#ffffff' }
+                  };
+              }
+
+              setState(prev => ({
+                  ...prev,
+                  settings: loadedSettings
+              }));
+
+              // --- CACHE CLEANUP (Admin Controlled) ---
+              // "user ka data auto clear hote jayega oar admin decide karega... History delete nahi hoga"
+              if (loadedSettings.cacheClearDays && loadedSettings.cacheClearDays > 0) {
+                  const now = Date.now();
+                  const retentionMs = loadedSettings.cacheClearDays * 24 * 60 * 60 * 1000;
+
+                  // Clean standard localStorage Content Cache
+                  Object.keys(localStorage).forEach(key => {
+                      if (key.startsWith('nst_content_')) {
+                          // We don't have timestamps on these keys usually, but if we did or if we rely on last access.
+                          // Since we can't track age easily on simple keys without metadata, we might need a more robust strategy.
+                          // However, assuming we want to clear *old* content.
+                          // Let's check if the key has a timestamp or if we just wipe all content occasionally?
+                          // Better: Use `storage` util which might have timestamps or just skip for now if too risky.
+                          // Wait, the requirement says "auto clear".
+                          // Let's implement a safe clear: Delete 'nst_content_' keys that haven't been accessed recently?
+                          // LocalStorage doesn't track access time.
+                          // Strategy: We will just clear ALL cached content if the "Last Clear Date" was > X days ago.
+                          const lastClear = parseInt(localStorage.getItem('nst_last_cache_clear') || '0');
+                          if (now - lastClear > retentionMs) {
+                              // console.log("Auto-Clearing Content Cache...");
+                              Object.keys(localStorage).forEach(k => {
+                                  if (k.startsWith('nst_content_')) localStorage.removeItem(k);
+                              });
+                              // Also clear indexedDB via storage util if possible (not exposed here, but we can try)
+                              storage.clear().catch(e => console.error(e));
+
+                              localStorage.setItem('nst_last_cache_clear', now.toString());
+                          }
+                      }
+                  });
+              }
+
+          } catch(e) {}
+      }
+
+      const hasAcceptedTerms = localStorage.getItem('nst_terms_accepted');
+      if (!hasAcceptedTerms && loadedSettings.showTermsPopup !== false) setShowTerms(true);
+
+      // POPUP QUEUE INITIALIZATION
+      const queue: ('TRACKER' | 'CHALLENGE' | 'WELCOME' | 'THREE_TIER')[] = [];
+      const loggedInUserStr = localStorage.getItem('nst_current_user');
+      const hasSeenWelcome = localStorage.getItem('nst_has_seen_welcome');
+
+      setPopupQueue(queue);
+
+    if (loggedInUserStr) {
+      try {
+        let user: User = JSON.parse(loggedInUserStr);
+
+        // STRICT VALIDATION: Ensure critical fields exist
+        if (!user || !user.id || !user.role) {
+            console.error("Invalid user object found in storage. Clearing session.");
+            localStorage.removeItem('nst_current_user');
+            return;
+        }
+
+        // console.log("Parsed user:", user);
+
+        // MIGRATION & RECALCULATION ON LOAD
+        if (user.role !== 'ADMIN') {
+             user = recalculateSubscriptionStatus(user, loadedSettings);
+             // Save back any migration changes immediately
+             if (JSON.stringify(user) !== loggedInUserStr) {
+                 localStorage.setItem('nst_current_user', JSON.stringify(user));
+                 saveUserToLive(user);
+             }
+        }
+
+        if (!user.progress) user.progress = {};
+        if (user.isLocked) {
+            localStorage.removeItem('nst_current_user');
+            setAlertConfig({isOpen: true, message: "Account Locked. Please contact Admin."});
+            return;
+        }
+
+        let initialView = (user.role === 'ADMIN' || user.role === 'SUB_ADMIN') ? 'ADMIN_DASHBOARD' : 'STUDENT_DASHBOARD';
+
+        if (user.role === 'STUDENT' && !user.profileCompleted) {
+             initialView = 'ONBOARDING';
+        }
+
+        // RESET CLASS IF LOCKED (e.g. Competition Mode)
+        let safeClass = user.classLevel || null;
+        const freeModes = loadedSettings.appMode?.allowedModesForFree || ['SCHOOL'];
+        if (!user.isPremium && safeClass === 'COMPETITION' && !freeModes.includes('COMPETITION')) {
+            safeClass = null; // Kick out of Competition
+            initialView = 'STUDENT_DASHBOARD'; // Default view
+        }
+
+        setState(prev => ({
+          ...prev,
+          user: user,
+          view: initialView as any,
+          selectedBoard: user.board || null,
+          selectedClass: safeClass,
+          selectedStream: user.stream || null,
+          language: user.board === 'BSEB' ? 'Hindi' : 'English',
+          showWelcome: !hasSeenWelcome && !!hasAcceptedTerms
+        }));
+      } catch(e) {
+        console.error("Error parsing user from localStorage:", e);
+        localStorage.removeItem('nst_current_user');
+      }
+    } else {
+      // console.log("No user found in localStorage.");
+    }
+  }, []);
+
+  // --- TIMER LOGIC (UPDATED) ---
+  useEffect(() => {
+    if (!state.user) return;
+
+    // Load initial seconds from storage
+    const today = new Date().toDateString();
+    const storedDate = localStorage.getItem('nst_timer_date');
+    const storedSeconds = parseInt(localStorage.getItem('nst_daily_study_seconds') || '0');
+
+    if (storedDate !== today) {
+        localStorage.setItem('nst_timer_date', today);
+        localStorage.setItem('nst_daily_study_seconds', '0');
+        setDailyStudySeconds(0);
+    } else {
+        setDailyStudySeconds(storedSeconds);
+    }
+
+    // TIMER STARTS AUTOMATICALLY ON LOGIN (GLOBAL)
+    let interval: any;
+    if (state.user) {
+        interval = setInterval(() => {
+            setDailyStudySeconds(prev => {
+                const next = prev + 1;
+                localStorage.setItem('nst_daily_study_seconds', next.toString());
+
+                // NEW: CHECK FOR DAILY REWARDS (DYNAMIC)
+                if (state.user && state.settings.engagementRewards) {
+                    state.settings.engagementRewards.forEach(reward => {
+                        if (reward.enabled && next === reward.seconds) {
+                             setActiveReward({
+                                id: `rew-${Date.now()}`,
+                                type: reward.type,
+                                amount: reward.amount,
+                                subTier: reward.subTier,
+                                subLevel: reward.subLevel,
+                                durationHours: reward.durationHours,
+                                label: reward.label,
+                                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+                            });
+                        }
+                    });
+                }
+
+                if (next % 10 === 0) updateUserStatus(state.user!.id, next);
+                return next;
+            });
+        }, 1000);
+    }
+
+    return () => {
+        if (interval) clearInterval(interval);
+    };
+  }, [state.user?.id, state.view]);
+
+  useEffect(() => {
+      document.title = `${state.settings.appName}`;
+
+      // Dynamic Theme Logic
+      let activeThemeColor = state.settings.themeColor || '#3b82f6';
+
+      if (state.user) {
+          // 1. Subscription Check
+          if (state.user.isPremium) {
+              if (state.user.subscriptionLevel === 'ULTRA') {
+                  activeThemeColor = '#a855f7'; // Purple
+              } else if (state.user.subscriptionLevel === 'BASIC') {
+                  activeThemeColor = '#3b82f6'; // Blue (Standard Premium)
+              }
+          }
+
+          // 2. Top 3 Logic (Overrides Subscription)
+          try {
+              const lbData = localStorage.getItem('nst_leaderboard');
+              if (lbData) {
+                  const entries: any[] = JSON.parse(lbData);
+                  const top3 = entries
+                      .sort((a, b) => b.score - a.score)
+                      .slice(0, 3)
+                      .map(e => e.userId);
+
+                  if (top3.includes(state.user.id)) {
+                      activeThemeColor = '#eab308'; // Gold
+                  }
+              }
+          } catch(e) {}
+      }
+
+      const styleId = 'nst-custom-styles';
+      let styleTag = document.getElementById(styleId);
+      if (!styleTag) {
+          styleTag = document.createElement('style');
+          styleTag.id = styleId;
+          document.head.appendChild(styleTag);
+      }
+      styleTag.innerHTML = `:root { --primary: ${activeThemeColor}; } .text-primary { color: var(--primary); } .bg-primary { background-color: var(--primary); } .border-primary { border-color: var(--primary); } ${state.settings.customCSS || ''}`;
+  }, [state.settings, state.user]);
+
+  // --- LOGGING SYSTEM ---
+  const logActivity = (action: string, details: string, overrideUser?: User) => {
+      const u = overrideUser || state.user;
+      if (!u && !overrideUser) return;
+
+      const newLog: ActivityLogEntry = {
+          id: Date.now().toString() + Math.random(),
+          userId: u!.id,
+          userName: u!.name,
+          role: u!.role,
+          action: action,
+          details: details,
+          timestamp: new Date().toISOString()
+      };
+
+      const storedLogs = localStorage.getItem('nst_activity_log');
+      const logs: ActivityLogEntry[] = storedLogs ? JSON.parse(storedLogs) : [];
+      // Keep last 500 logs
+      const updatedLogs = [...logs, newLog].slice(-500);
+      localStorage.setItem('nst_activity_log', JSON.stringify(updatedLogs));
+  };
+
+  const updateSettings = (newSettings: SystemSettings) => {
+      setState(prev => ({...prev, settings: newSettings}));
+      localStorage.setItem('nst_system_settings', JSON.stringify(newSettings));
+  };
+
+  // Provide a global toggle handler for TTS
+  const handleToggleAutoTts = (enabled: boolean) => {
+      const newSettings = { ...state.settings, isAutoTtsEnabled: enabled };
+      updateSettings(newSettings);
+  };
+
+  const handleAcceptTerms = () => {
+      localStorage.setItem('nst_terms_accepted', 'true');
+      setShowTerms(false);
+      const hasSeenWelcome = localStorage.getItem('nst_has_seen_welcome');
+      if (!hasSeenWelcome) setState(prev => ({ ...prev, showWelcome: true }));
+  };
+
+  const handleStartApp = () => {
+    localStorage.setItem('nst_has_seen_welcome', 'true');
+    setState(prev => ({ ...prev, showWelcome: false }));
+  };
+
+  useEffect(() => {
+    if (state.user && state.view === 'STUDENT_DASHBOARD') {
+        const queue: PopupType[] = [];
+
+        // 1. Daily Tracker (Always check)
+        const lastTracker = localStorage.getItem('nst_last_daily_tracker_date');
+        if (lastTracker !== new Date().toDateString()) {
+            queue.push('TRACKER');
+        }
+
+        // 2. Welcome/Promo Popup - DISABLED
+
+        if (queue.length > 0) setPopupQueue(queue);
+    }
+  }, [state.user?.id, state.view, state.settings]);
+
+    const handleLogin = (user: User) => {
+    if (!state.originalAdmin) {
+        localStorage.setItem('nst_current_user', JSON.stringify(user));
+    }
+    saveUserToLive(user);
+    localStorage.setItem('nst_has_seen_welcome', 'true');
+
+    // Check if onboarding is needed
+    if (user.role === 'STUDENT' && !user.profileCompleted) {
+        setState(prev => ({
+          ...prev,
+          user,
+          view: 'ONBOARDING',
+          showWelcome: false
+        }));
+        return;
+    }
+
+    setState(prev => ({
+      ...prev,
+      user,
+      view: ((user.role === 'ADMIN' || user.role === 'SUB_ADMIN') ? 'ADMIN_DASHBOARD' : 'STUDENT_DASHBOARD') as any,
+      selectedBoard: user.board || null,
+      selectedClass: user.classLevel || null,
+      selectedStream: user.stream || null,
+      language: user.board === 'BSEB' ? 'Hindi' : 'English',
+      showWelcome: false
+    }));
+  };
+
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [logoutTimeLeft, setLogoutTimeLeft] = useState(10);
+  const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [showCloudRecoveryModal, setShowCloudRecoveryModal] = useState(false);
+
+  const performLogout = () => {
+    logActivity("LOGOUT", "User Logged Out");
+    localStorage.removeItem('nst_current_user');
+    localStorage.removeItem('nst_user_history'); // Clear Saved Notes on logout to prevent bleeding across accounts
+    setState(prev => ({ ...prev, user: null, originalAdmin: null, view: 'BOARDS', selectedBoard: null, selectedClass: null, selectedStream: null, selectedSubject: null, lessonContent: null, language: 'English' }));
+    setDailyStudySeconds(0);
+  };
+
+  useEffect(() => {
+     let timer: NodeJS.Timeout;
+     if (logoutPending && logoutTimeLeft > 0) {
+        timer = setTimeout(() => {
+            setLogoutTimeLeft(prev => prev - 1);
+        }, 1000);
+     } else if (logoutPending && logoutTimeLeft <= 0) {
+        // Sync and logout
+        if (state.user) {
+            saveUserToLive(state.user).catch(err => console.error("Error syncing on logout", err));
+        }
+        performLogout();
+        setLogoutPending(false);
+     }
+     return () => clearTimeout(timer);
+  }, [logoutPending, logoutTimeLeft]);
+
+  const handleLogout = () => {
+    if (!state.user) {
+       performLogout();
+       return;
+    }
+    setLogoutPending(true);
+    setLogoutTimeLeft(10);
+  };
+
+  const handleMCQComplete = (score: number, answers: Record<number, number>, displayData: MCQItem[], timeTaken: number) => {
+    if (!state.user || !state.selectedChapter) return;
+
+    // Build Wrong Questions List (Strictly Incorrect Attempts)
+    const wrongQuestions = displayData
+      .map((q, idx) => {
+          const selected = answers[idx] !== undefined ? answers[idx] : -1;
+          // Filter: Must be attempted (not -1) AND wrong
+          if (selected !== -1 && selected !== q.correctAnswer) {
+              return {
+                  question: q.question,
+                  qIndex: idx
+              };
+          }
+          return null;
+      })
+      .filter((item): item is { question: string; qIndex: number } => item !== null);
+
+    // NEW: Calculate Granular Topic Analysis
+    const topicAnalysis: Record<string, { correct: number, total: number, percentage: number }> = {};
+    displayData.forEach((q, idx) => {
+        const topic = q.topic || 'General';
+        if (!topicAnalysis[topic]) topicAnalysis[topic] = { correct: 0, total: 0, percentage: 0 };
+        topicAnalysis[topic].total++;
+        if (answers[idx] === q.correctAnswer) topicAnalysis[topic].correct++;
+    });
+    // Calculate Percentages
+    Object.keys(topicAnalysis).forEach(topic => {
+        const t = topicAnalysis[topic];
+        t.percentage = t.total > 0 ? Math.round((t.correct / t.total) * 100) : 0;
+    });
+
+    const result: MCQResult = {
+        id: `mcq_${state.selectedChapter.id}_${Date.now()}`,
+        userId: state.user.id,
+        date: new Date().toISOString(),
+        score,
+        totalQuestions: displayData.length, // Ensure required MCQResult field is populated
+        correctCount: score,              // Ensure correctCount is set
+        wrongCount: displayData.length - score, // Calculate and set wrongCount
+        totalTimeSeconds: timeTaken,        // Ensure time is set
+        timeTaken,
+        chapterId: state.selectedChapter.id,
+        chapterTitle: state.selectedChapter.title,
+        subjectId: state.selectedSubject?.id || '',
+        subjectName: state.selectedSubject?.title || '',
+        classLevel: state.selectedClass || '',
+        userAnswers: answers,
+        wrongQuestions: wrongQuestions,
+        topicAnalysis: topicAnalysis // Save for history comparison
+    };
+
+    setLastTestResult(result);
+    setLastTestQuestions(displayData); // Pass for Marksheet Granular View
+
+    // UPDATE USER HISTORY & PROGRESS
+    let updatedUser = { ...state.user };
+    if (!updatedUser.testResults) updatedUser.testResults = [];
+    updatedUser.testResults.unshift(result);
+    if (!updatedUser.mcqHistory) updatedUser.mcqHistory = [];
+    updatedUser.mcqHistory.unshift(result);
+
+    // AUTO-NOTIFICATION LOGIC (Low Score)
+    const percentage = displayData.length > 0 ? (score / displayData.length) * 100 : 0;
+    if (percentage < 40) {
+        const failureMsg = {
+            id: `fail-alert-${Date.now()}`,
+            text: `⚠️ Alert: You scored only ${Math.round(percentage)}% in "${state.selectedChapter.title}". We recommend reviewing the notes immediately.`,
+            date: new Date().toISOString(),
+            read: false,
+            type: 'TEXT'
+        };
+        updatedUser.inbox = [failureMsg, ...(updatedUser.inbox || [])];
+        setAlertConfig({isOpen: true, message: "⚠️ Low Score Alert: Check your inbox for study recommendations."});
+    }
+
+    // Save to Firestore
+    saveUserHistory(state.user.id, result);
+    saveTestResult(state.user.id, result);
+
+    if (!state.originalAdmin) {
+        saveUserToLive(updatedUser);
+        localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+    }
+    setState(prev => ({ ...prev, user: updatedUser }));
+  };
+
+  const handleImpersonate = (targetUser: User) => {
+      if (state.user?.role !== 'ADMIN') return;
+      logActivity("IMPERSONATE", `Admin accessed as ${targetUser.name}`);
+      // NOTE: We do NOT update localStorage 'nst_current_user' here, so refresh restores Admin
+      setState(prev => ({ ...prev, originalAdmin: prev.user, user: targetUser, view: 'STUDENT_DASHBOARD', selectedBoard: targetUser.board || null, selectedClass: targetUser.classLevel || null, selectedStream: targetUser.stream || null, language: targetUser.board === 'BSEB' ? 'Hindi' : 'English' }));
+  };
+
+  const handleReturnToAdmin = () => {
+      if (!state.originalAdmin) return;
+      setState(prev => ({ ...prev, user: prev.originalAdmin, originalAdmin: null, view: 'ADMIN_DASHBOARD', selectedBoard: null, selectedClass: null }));
+  };
+
+  const updateUserProfile = (updates: Partial<User>) => {
+      if (!state.user) return;
+      const updatedUser = { ...state.user, ...updates };
+
+      // Update State
+      setState(prev => ({ ...prev, user: updatedUser }));
+
+      // Persist (Only if not impersonating)
+      if (!state.originalAdmin) {
+          localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+          saveUserToLive(updatedUser);
+      }
+  };
+
+  const handleBoardSelect = (board: Board) => {
+      updateUserProfile({ board });
+      setState(prev => ({ ...prev, selectedBoard: board, view: 'CLASSES', language: board === 'BSEB' ? 'Hindi' : 'English' }));
+  };
+
+  const handleClassSelect = (level: ClassLevel) => {
+      // STRICT CLASS LOCKING (1 Account = 1 Class)
+      // Allow change only if: Admin, Impersonating, or No Class Set yet.
+      if (state.user?.classLevel && state.user.classLevel !== level) {
+          if (state.user.role !== 'ADMIN' && state.user.role !== 'SUB_ADMIN' && !state.originalAdmin) {
+              setAlertConfig({ isOpen: true, message: "🔒 Class is locked! You cannot change your class once selected.\n\nContact Admin for help." });
+              return;
+          }
+      }
+
+      // 1. Update Profile FIRST (Persist to Cloud/Local)
+      updateUserProfile({ classLevel: level });
+
+      // 2. Update Local State (Immediate UI Feedback without reload)
+      // We must update 'user' in state to match the persistence, otherwise child components might get stale props
+      setState(prev => {
+          const updatedUser = prev.user ? { ...prev.user, classLevel: level } : null;
+
+          if (level === '11' || level === '12') {
+              return { ...prev, user: updatedUser, selectedClass: level, view: 'STREAMS' };
+          }
+
+          // For non-stream classes, we also clear stream
+          const finalUser = updatedUser ? { ...updatedUser, stream: undefined } : null; // Use undefined instead of null to match type if optional
+
+          if (level === 'COMPETITION') {
+               updateUserProfile({ stream: null }); // Ensure DB is cleared too
+               return { ...prev, user: finalUser as any, selectedClass: level, selectedStream: null, view: 'SUBJECTS' };
+          } else {
+               updateUserProfile({ stream: null });
+               return { ...prev, user: finalUser as any, selectedClass: level, selectedStream: null, view: 'SUBJECTS' };
+          }
+      });
+  };
+
+  const handleStreamSelect = (stream: Stream) => {
+      updateUserProfile({ stream });
+      setState(prev => ({ ...prev, selectedStream: stream, view: 'SUBJECTS' }));
+  };
+
+  const handleSubjectSelect = async (subject: Subject) => {
+    setState(prev => ({ ...prev, selectedSubject: subject, loading: true }));
+    try {
+      if (state.selectedClass && state.selectedBoard) {
+        const chapters = await fetchChapters(state.selectedBoard, state.selectedClass, state.selectedStream, subject, state.language);
+        setState(prev => ({ ...prev, chapters, view: 'CHAPTERS', loading: false }));
+      }
+    } catch (err) { setState(prev => ({ ...prev, chapters: [], view: 'CHAPTERS', loading: false })); }
+  };
+
+  const onChapterClick = (chapter: Chapter, contentType?: ContentType) => {
+    setTempSelectedChapter(chapter);
+    if (contentType) {
+      handleContentGeneration(contentType);
+    } else {
+      setShowPremiumModal(true);
+    }
+  };
+
+  const handleNavigateToChapterFromHistory = (chapterId: string, chapterTitle: string, subjectName: string, classLevel?: string) => {
+      const tempChapter: Chapter = {
+          id: chapterId,
+          title: chapterTitle,
+          subject: subjectName,
+          board: state.selectedBoard || 'CBSE',
+          classLevel: (classLevel || state.selectedClass || '10') as any,
+          order: 0,
+          isLocked: false
+      };
+      setTempSelectedChapter(tempChapter);
+      setShowPremiumModal(true);
+  };
+
+  const handleContentGeneration = async (type: ContentType, count?: number, forcePay: boolean = false, specificContent?: any) => {
+    setShowPremiumModal(false);
+    setLoadingContentType(type);
+    if (!tempSelectedChapter || !state.user) return;
+
+    // --- SPECIFIC CONTENT LAUNCH (FROM NEW DASHBOARD) ---
+    if (specificContent) {
+        // 1. Determine Cost (Dynamic Check from Feature Config)
+        let cost = 0;
+        if (specificContent.isPremium) {
+             // Fallback Defaults
+             cost = 5;
+             if (type === 'VIDEO_LECTURE') cost = state.settings.defaultVideoCost || 5;
+             if (type === 'NOTES_PREMIUM' || type === 'NOTES_HTML_PREMIUM') cost = state.settings.defaultPdfCost || 5;
+
+             // Override with Granular Feature Cost if exists
+             if (state.settings.featureCosts) {
+                 // Map ContentType to Feature ID (approximate mapping)
+                 let featId = '';
+                 if (type === 'VIDEO_LECTURE') featId = 'video_view';
+                 else if (type.startsWith('NOTES') || type.startsWith('PDF')) featId = 'pdf_view';
+
+                 if (featId) {
+                     const costConfig = state.settings.featureCosts.find(f => f.featureId === featId);
+                     if (costConfig) {
+                         const tier = state.user.subscriptionTier === 'FREE' ? 'free' : state.user.subscriptionLevel === 'BASIC' ? 'basic' : 'ultra';
+                         cost = costConfig[`${tier}Cost`];
+                     }
+                 }
+             }
+        }
+
+
+        // OVERRIDE FOR CREDIT FREE EVENT
+        if (state.settings.isCreditFreeEvent || state.settings.isGlobalFreeMode) cost = 0;
+
+        // CHECK IF UNLOCKED VIA REDEEM CODE
+        // We check against Chapter ID or specific Content ID
+        if (state.user.unlockedContent && (state.user.unlockedContent.includes(tempSelectedChapter.id) || state.user.unlockedContent.includes(specificContent?.id))) {
+            cost = 0;
+        }
+
+
+        // 2. Check & Deduct
+        if (cost > 0 && state.user.role !== 'ADMIN' && !state.originalAdmin) {
+             if (state.user.credits < cost) {
+                 setAlertConfig({isOpen: true, message: `Insufficient Credits! You need ${cost} Credits.`});
+                 return;
+             }
+             if (!state.user.isAutoDeductEnabled && !forcePay) {
+                 setCreditModal({
+                     isOpen: true, cost, title: "Unlock Content",
+                     onConfirm: (auto) => {
+                         if (auto) {
+                             const u = { ...state.user!, isAutoDeductEnabled: true };
+                             saveUserToLive(u);
+                             setState(p => ({...p, user: u}));
+                         }
+                         setCreditModal(null);
+                         handleContentGeneration(type, count, true, specificContent);
+                     }
+                 });
+                 return;
+             }
+             const updatedUser = { ...state.user, credits: state.user.credits - cost };
+             if (!state.originalAdmin) {
+                 localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+                 saveUserToLive(updatedUser);
+             }
+             setState(prev => ({...prev, user: updatedUser}));
+        }
+
+        // 3. Launch
+        const lessonContent: LessonContent = {
+            id: specificContent.id || Date.now().toString(),
+            title: specificContent.title || tempSelectedChapter.title,
+            subtitle: specificContent.topic || 'Premium Content',
+            content: specificContent.content || specificContent.url, // Handle both Note (content) and Video (url)
+            type: type,
+            dateCreated: new Date().toISOString(),
+            subjectName: state.selectedSubject?.name || '',
+            // Pass through other fields if video
+            videoPlaylist: specificContent.videoPlaylist
+        };
+
+        setState(prev => ({ ...prev, selectedChapter: tempSelectedChapter, lessonContent, view: 'LESSON' }));
+        setIsFullScreen(true);
+        return;
+    }
+
+    // --- HTML NOTES & AI IMAGE HANDLING ---
+    if (type === 'NOTES_HTML_FREE' || type === 'NOTES_HTML_PREMIUM' || type === 'NOTES_IMAGE_AI') {
+        const streamKey = (state.selectedClass === '11' || state.selectedClass === '12') ? `-${state.selectedStream}` : '';
+        const mainKey = `nst_content_${state.selectedBoard}_${state.selectedClass}${streamKey}_${state.selectedSubject?.name}_${tempSelectedChapter.id}`;
+
+        let contentData = await getChapterData(mainKey);
+        if (!contentData) {
+            const stored = localStorage.getItem(mainKey);
+            if (stored) contentData = JSON.parse(stored);
+        }
+
+        let actualContent = '';
+        let cost = 0;
+        let subtitle = '';
+
+        if (type === 'NOTES_HTML_FREE') {
+            actualContent = contentData?.freeNotesHtml;
+            subtitle = 'Free Notes (Rich Text)';
+            cost = 0;
+        } else if (type === 'NOTES_HTML_PREMIUM') {
+            actualContent = contentData?.premiumNotesHtml;
+            subtitle = 'Premium Notes (Rich Text)';
+            cost = 5;
+        } else if (type === 'NOTES_IMAGE_AI') {
+            actualContent = contentData?.aiImageLink;
+            subtitle = 'AI Generated Visual Notes';
+            cost = contentData?.aiImagePrice !== undefined ? contentData.aiImagePrice : 5;
+        }
+
+        if (!actualContent) {
+            // Replaced Alert with Coming Soon View
+            setState(prev => ({
+                ...prev,
+                selectedChapter: tempSelectedChapter,
+                lessonContent: {
+                    id: Date.now().toString(),
+                    title: tempSelectedChapter.title,
+                    subtitle: "Content Unavailable",
+                    content: "",
+                    type: type,
+                    dateCreated: new Date().toISOString(),
+                    subjectName: state.selectedSubject?.name || '',
+                    isComingSoon: true
+                },
+                view: 'LESSON'
+            }));
+            setIsFullScreen(true);
+            return;
+        }
+
+         if (state.user.role !== 'ADMIN' && !state.originalAdmin && cost > 0) {
+             if (state.user.credits < cost) {
+                 setAlertConfig({isOpen: true, message: `Insufficient Credits! You need ${cost} Credits.`});
+                 return;
+             }
+
+             // CONFIRMATION CHECK
+             if (!state.user.isAutoDeductEnabled && !forcePay) {
+                 setCreditModal({
+                     isOpen: true,
+                     cost,
+                     title: "Unlock AI Content",
+                     onConfirm: (auto) => {
+                         if (auto) {
+                             const u = { ...state.user!, isAutoDeductEnabled: true };
+                             saveUserToLive(u);
+                             setState(p => ({...p, user: u}));
+                         }
+                         setCreditModal(null);
+                         handleContentGeneration(type, count, true);
+                     }
+                 });
+                 return;
+             }
+
+             const updatedUser = { ...state.user, credits: state.user.credits - cost };
+             if (!state.originalAdmin) {
+                 localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+                 saveUserToLive(updatedUser);
+             }
+             setState(prev => ({...prev, user: updatedUser}));
+        }
+
+        // --- SPECIFIC AI DELAY FOR IMAGE NOTES ---
+        if (type === 'NOTES_IMAGE_AI') {
+            setState(prev => ({ ...prev, loading: true }));
+            setLoadingMessage("AI is analyzing and generating visual notes...");
+            setGenerationDataReady(false);
+
+            // Wait 5-8 seconds to simulate AI work
+            setTimeout(() => {
+                setGenerationDataReady(true);
+                setLoadingMessage("Notes Ready!");
+
+                const lessonContent: LessonContent = {
+                    id: Date.now().toString(),
+                    title: tempSelectedChapter.title,
+                    subtitle: subtitle,
+                    content: actualContent, // Image URL
+                    aiHtmlContent: contentData?.aiHtmlContent, // Pass HTML Content if exists
+                    type: type,
+                    dateCreated: new Date().toISOString(),
+                    subjectName: state.selectedSubject?.name || ''
+                };
+
+                // Allow a small delay for "Ready" message to be seen
+                setTimeout(() => {
+                    setState(prev => ({ ...prev, selectedChapter: tempSelectedChapter, lessonContent, view: 'LESSON', loading: false }));
+                    setIsFullScreen(true);
+                    setLoadingMessage('');
+                }, 1000);
+
+            }, 6000); // 6 Seconds Delay
+            return;
+        }
+
+        // For HTML Notes (Immediate)
+        const lessonContent: LessonContent = {
+            id: Date.now().toString(),
+            title: tempSelectedChapter.title,
+            subtitle: subtitle,
+            content: actualContent,
+            type: type,
+            dateCreated: new Date().toISOString(),
+            subjectName: state.selectedSubject?.name || ''
+        };
+
+        setState(prev => ({ ...prev, selectedChapter: tempSelectedChapter, lessonContent, view: 'LESSON' }));
+        setIsFullScreen(true); // AI Lesson is Full Screen
+        return;
+    }
+
+    // Check Cost Logic
+    let cost = 0;
+    const streamKey = (state.selectedClass === '11' || state.selectedClass === '12') ? `-${state.selectedStream}` : '';
+
+    // 1. Construct Keys
+    const mainKey = `nst_content_${state.selectedBoard}_${state.selectedClass}${streamKey}_${state.selectedSubject?.name}_${tempSelectedChapter.id}`;
+    const typeKey = `${mainKey}_${type}`;
+
+    // 2. Try Fetching Admin Data (Main Key) - Consolidates all links
+    let onlineContent: any = await getChapterData(mainKey);
+    let foundAdminContent = false;
+
+    // Filter Admin Data for the requested Type
+    if (onlineContent) {
+        if (type === 'PDF_FREE' && (onlineContent.freeLink || onlineContent.freeNotesHtml || onlineContent.schoolFreeNotesList?.length > 0 || onlineContent.competitionFreeNotesList?.length > 0)) {
+            onlineContent = { ...onlineContent, content: onlineContent.freeLink || '', type, price: 0 };
+            foundAdminContent = true;
+        } else if (type === 'PDF_PREMIUM' && (onlineContent.premiumLink || onlineContent.premiumNotesHtml || onlineContent.schoolPremiumNotesList?.length > 0 || onlineContent.competitionPremiumNotesList?.length > 0)) {
+            onlineContent = { ...onlineContent, content: onlineContent.premiumLink || '', type }; // Uses default price from object
+            foundAdminContent = true;
+        } else if (type === 'PDF_ULTRA' && onlineContent.ultraPdfLink) {
+            onlineContent = { ...onlineContent, content: onlineContent.ultraPdfLink, type, price: 10 }; // Ultra defaults to 10
+            foundAdminContent = true;
+        } else if (type === 'VIDEO_LECTURE' && (onlineContent.videoPlaylist?.length > 0 || onlineContent.schoolVideoPlaylist?.length > 0 || onlineContent.competitionVideoPlaylist?.length > 0 || onlineContent.freeVideoLink || onlineContent.premiumVideoLink)) {
+            // Prioritize Playlist -> Premium Link -> Free Link
+            const videoUrl = onlineContent.premiumVideoLink || onlineContent.freeVideoLink || '';
+            const vidPrice = onlineContent.videoCreditsCost !== undefined ? onlineContent.videoCreditsCost : 5;
+            // Ensure playlists are passed through
+            onlineContent = {
+                ...onlineContent,
+                content: videoUrl,
+                videoPlaylist: onlineContent.videoPlaylist || onlineContent.schoolVideoPlaylist || onlineContent.competitionVideoPlaylist, // Fallback logic
+                type,
+                price: vidPrice
+            };
+            foundAdminContent = true;
+        } else {
+            // Not found in Admin Data for this specific type (might be AI content)
+            onlineContent = null;
+        }
+    }
+
+    // 3. If not in Admin Data, check Type-Specific Key (Legacy/AI Generated)
+    if (!onlineContent) {
+        onlineContent = await getChapterData(typeKey);
+    }
+
+    if (onlineContent) {
+         if(onlineContent.price !== undefined) cost = onlineContent.price;
+    }
+
+    // --- EMPTY CONTENT GUARD ---
+    // If online content is found but the URL/Content is empty string, force coming soon.
+    if (onlineContent && !onlineContent.content && !onlineContent.videoPlaylist?.length && !onlineContent.aiHtmlContent) {
+        setState(prev => ({
+            ...prev,
+            selectedChapter: tempSelectedChapter,
+            lessonContent: {
+                id: Date.now().toString(),
+                title: tempSelectedChapter.title,
+                subtitle: "Content Unavailable",
+                content: "",
+                type: type,
+                dateCreated: new Date().toISOString(),
+                subjectName: state.selectedSubject?.name || '',
+                isComingSoon: true
+            },
+            view: 'LESSON'
+        }));
+        setIsFullScreen(true);
+        return;
+    }
+
+
+    // OVERRIDE FOR CREDIT FREE EVENT
+    if (state.settings.isCreditFreeEvent || state.settings.isGlobalFreeMode) cost = 0;
+
+    // CHECK IF UNLOCKED VIA REDEEM CODE
+    if (state.user.unlockedContent && state.user.unlockedContent.includes(tempSelectedChapter.id)) {
+        cost = 0;
+    }
+
+
+    // --- ACCESS CONTROL LOGIC (Unified) ---
+    let hasAccess = false;
+
+    // 1. Admin / System
+    if (state.user.role === 'ADMIN' || state.originalAdmin) {
+        hasAccess = true;
+    }
+    // 2. Global Free Mode
+    else if (state.settings.isGlobalFreeMode) {
+        hasAccess = true;
+    }
+    // 3. Cost is 0 (Free Content)
+    else if (cost === 0) {
+        hasAccess = true;
+    }
+    // 3. Tier/Subscription Permission Check
+    else {
+        // DOUBLE CHECK: Even if isPremium is true, validate date
+        const isSubValid = state.user.isPremium && state.user.subscriptionEndDate && new Date(state.user.subscriptionEndDate) > new Date();
+
+        // Auto-Downgrade in memory if invalid but flagged premium (Self-Healing)
+        if (state.user.isPremium && !isSubValid) {
+             console.warn("Detected Expired Premium during Access Check. Treating as FREE.");
+        }
+
+        const userLevel = isSubValid ? (state.user.subscriptionLevel || 'BASIC') : 'FREE';
+        const perms = state.settings.tierPermissions?.[userLevel];
+
+        if (perms && perms.length > 0) {
+             if (perms.includes('ALL') || perms.includes(type)) {
+                 hasAccess = true;
+             }
+             // MAP GROUP PERMISSIONS (From Admin Power Manager)
+             if (type.startsWith('PDF') && perms.includes('NOTES_ACCESS')) hasAccess = true;
+             if (type.startsWith('NOTES') && perms.includes('NOTES_ACCESS')) hasAccess = true;
+             if (type === 'VIDEO_LECTURE' && perms.includes('VIDEO_ACCESS')) hasAccess = true;
+             if (type.startsWith('AUDIO') && perms.includes('AUDIO_ACCESS')) hasAccess = true;
+             if ((type === 'MCQ_SIMPLE' || type === 'MCQ_PRACTICE') && perms.includes('MCQ_PRACTICE')) hasAccess = true;
+             if (type === 'MCQ_TEST' && perms.includes('MCQ_TEST')) hasAccess = true;
+             if (type === 'AI_CHAT' && perms.includes('AI_CHAT')) hasAccess = true;
+        } else if (isSubValid) {
+            // Fallback Legacy Logic
+            const legacyLevel = state.user.subscriptionLevel || 'BASIC';
+            if (legacyLevel === 'ULTRA') {
+                hasAccess = true;
+            } else if (legacyLevel === 'BASIC') {
+                if (['MCQ_ANALYSIS', 'MCQ_SIMPLE', 'NOTES_HTML_FREE', 'NOTES_HTML_PREMIUM', 'NOTES_PREMIUM', 'NOTES_SIMPLE'].includes(type)) {
+                    hasAccess = true;
+                }
+            }
+        }
+    }
+
+    // 4. Credit Deduction (Fallback)
+    if (!hasAccess) {
+        if (state.user.credits >= cost) {
+
+            // NEW: CONFIRMATION CHECK
+            if (!state.user.isAutoDeductEnabled && !forcePay) {
+                 setCreditModal({
+                     isOpen: true,
+                     cost,
+                     title: "Unlock AI Content",
+                     onConfirm: (auto) => {
+                         if (auto) {
+                             const u = { ...state.user!, isAutoDeductEnabled: true };
+                             saveUserToLive(u);
+                             setState(p => ({...p, user: u}));
+                         }
+                         setCreditModal(null);
+                         handleContentGeneration(type, count, true);
+                     }
+                 });
+                 return;
+            }
+
+            // Deduct Credits
+            const updatedUser = { ...state.user, credits: state.user.credits - cost };
+
+            if (!state.originalAdmin) {
+                localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+
+                // Sync to LocalStorage list
+                const storedUsers = localStorage.getItem('nst_users');
+                if (storedUsers) {
+                    const allUsers = JSON.parse(storedUsers);
+                    const idx = allUsers.findIndex((u:User) => u.id === updatedUser.id);
+                    if (idx !== -1) {
+                        allUsers[idx] = updatedUser;
+                        localStorage.setItem('nst_users', JSON.stringify(allUsers));
+                    }
+                }
+                // Sync to Live
+                saveUserToLive(updatedUser);
+            }
+
+            setState(prev => ({...prev, user: updatedUser}));
+            hasAccess = true; // Access Granted via Credits
+        } else {
+            setAlertConfig({isOpen: true, message: `Insufficient Credits! This content costs ${cost} credits.\n\nTip: Upgrade to Subscription to access unlimited content.`});
+            return;
+        }
+    }
+
+    setState(prev => ({ ...prev, selectedChapter: tempSelectedChapter, loading: true }));
+    setGenerationDataReady(false);
+
+    logActivity("CONTENT_GEN", `Opened ${type} for ${tempSelectedChapter.title}`);
+
+    // LIVE ACTIVITY TRACKING
+    if (state.user && !state.originalAdmin) {
+        const activity = `Viewing ${type}: ${tempSelectedChapter.title}`;
+        const updatedUser = { ...state.user, currentActivity: activity, lastActiveTime: new Date().toISOString() };
+        saveUserToLive(updatedUser);
+    }
+
+    try {
+        // RESTORE PROGRESS LOGIC
+        let restoredAnswers = undefined;
+        if ((type === 'MCQ_ANALYSIS' || type === 'MCQ_SIMPLE') && state.user.testResults) {
+            // Find most recent result for this chapter
+            const pastResult = state.user.testResults.find(r => r.chapterId === tempSelectedChapter.id);
+            if (pastResult) {
+                restoredAnswers = pastResult.userAnswers;
+            }
+        }
+
+        // Try to use online content if available
+        if (onlineContent) {
+            const restoredContent = { ...onlineContent, userAnswers: restoredAnswers };
+            // Double check for content existence before setting state
+            if (!restoredContent.content && !restoredContent.videoPlaylist?.length && !restoredContent.aiHtmlContent && type !== 'MCQ_ANALYSIS' && type !== 'MCQ_SIMPLE') {
+                 // Fallback to Coming Soon if somehow slipped through
+                 restoredContent.isComingSoon = true;
+            }
+            setState(prev => ({ ...prev, lessonContent: restoredContent }));
+            setGenerationDataReady(true);
+            return;
+        }
+
+        // If no online content found and it's a generated type (e.g. NOTES_SIMPLE), we might generate it.
+        // But if it's a strict type like PDF or VIDEO and not found in Admin, it's Coming Soon.
+        if (['PDF_FREE', 'PDF_PREMIUM', 'PDF_ULTRA', 'VIDEO_LECTURE'].includes(type)) {
+             setState(prev => ({
+                ...prev,
+                selectedChapter: tempSelectedChapter,
+                lessonContent: {
+                    id: Date.now().toString(),
+                    title: tempSelectedChapter.title,
+                    subtitle: "Coming Soon",
+                    content: "",
+                    type: type,
+                    dateCreated: new Date().toISOString(),
+                    subjectName: state.selectedSubject?.name || '',
+                    isComingSoon: true
+                },
+                loading: false,
+                view: 'LESSON'
+            }));
+            setIsFullScreen(true);
+            return;
+        }
+
+        setIsStreaming(true);
+        const handleStreamUpdate = (text: string) => {
+             setState(prev => {
+                 const currentContent = prev.lessonContent || {
+                     id: Date.now().toString(),
+                     title: tempSelectedChapter.title,
+                     subtitle: subtitle || 'Generating...',
+                     type: type,
+                     dateCreated: new Date().toISOString(),
+                     subjectName: state.selectedSubject?.name || '',
+                     content: ''
+                 };
+
+                 return {
+                     ...prev,
+                     lessonContent: { ...currentContent, content: text } as LessonContent,
+                     loading: false,
+                     view: 'LESSON'
+                 };
+             });
+        };
+
+        const content = await fetchLessonContent(
+          state.selectedBoard!, state.selectedClass!, state.selectedStream!, state.selectedSubject!, tempSelectedChapter, state.language, type,
+          0, false, 15, "", state.user?.role === 'ADMIN',
+          handleStreamUpdate
+        );
+
+        setIsStreaming(false);
+
+        // Save generated content to Firebase
+        await saveChapterData(mainKey, content);
+
+        const restoredContent = { ...content, userAnswers: restoredAnswers };
+        setState(prev => ({ ...prev, lessonContent: restoredContent }));
+        setGenerationDataReady(true); // Immediate ready for link mode
+        setIsFullScreen(true); // Auto Full Screen for Lesson
+    } catch (err) {
+      setIsStreaming(false);
+      setState(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleLoadingAnimationComplete = () => {
+      setState(prev => ({ ...prev, loading: false, view: 'LESSON' }));
+      setIsFullScreen(true);
+  };
+
+  const handleClaimReward = () => {
+      if (!activeReward || !state.user) return;
+
+      let updatedUser = { ...state.user };
+      if (activeReward.id.startsWith('login-bonus-')) {
+          updatedUser.lastLoginRewardDate = new Date().toISOString();
+      }
+
+      if (activeReward.type === 'COINS') {
+          updatedUser.credits = (updatedUser.credits || 0) + (activeReward.amount || 0);
+      } else if (activeReward.type === 'SUBSCRIPTION') {
+          // Use addSubscription to stack/manage concurrent subscriptions
+          const newSub: ActiveSubscription = {
+              id: `rew-${Date.now()}`,
+              tier: activeReward.subTier as any || 'WEEKLY',
+              level: activeReward.subLevel || 'BASIC',
+              startDate: new Date().toISOString(),
+              endDate: new Date(Date.now() + (activeReward.durationHours || 4) * 60 * 60 * 1000).toISOString(),
+              source: 'REWARD'
+          };
+          updatedUser = addSubscription(updatedUser, newSub, state.settings);
+          updatedUser.grantedByAdmin = true;
+
+          // RECORD HISTORY
+          const historyEntry: SubscriptionHistoryEntry = {
+              id: `hist-${Date.now()}`,
+              tier: activeReward.subTier || 'WEEKLY',
+              level: activeReward.subLevel || 'BASIC',
+              startDate: new Date().toISOString(),
+              endDate: newSub.endDate,
+              durationHours: activeReward.durationHours || 4,
+              price: 0,
+              originalPrice: 99, // Estimated Value
+              isFree: true,
+              grantSource: 'REWARD'
+          };
+          updatedUser.subscriptionHistory = [historyEntry, ...(updatedUser.subscriptionHistory || [])];
+      }
+
+      if (!state.originalAdmin) {
+          localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+          saveUserToLive(updatedUser);
+      }
+      setState(prev => ({...prev, user: updatedUser}));
+      setActiveReward(null);
+      setAlertConfig({isOpen: true, message: `🎉 Reward Claimed: ${activeReward.label}`});
+  };
+
+  const handleIgnoreReward = () => {
+      if (!activeReward || !state.user) return;
+
+      const updatedUser = {
+          ...state.user,
+          pendingRewards: [...(state.user.pendingRewards || []), activeReward]
+      };
+
+      if (activeReward.id.startsWith('login-bonus-')) {
+          updatedUser.lastLoginRewardDate = new Date().toISOString();
+      }
+
+      if (!state.originalAdmin) {
+          localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+          saveUserToLive(updatedUser);
+      }
+      setState(prev => ({...prev, user: updatedUser}));
+      setActiveReward(null);
+  };
+
+  const handleStartWeeklyTest = (test: WeeklyTest) => {
+    setActiveWeeklyTest(test);
+    // LIVE ACTIVITY TRACKING
+    if (state.user && !state.originalAdmin) {
+        const activity = `Taking Test: ${test.name}`;
+        const updatedUser = { ...state.user, currentActivity: activity, lastActiveTime: new Date().toISOString() };
+        saveUserToLive(updatedUser);
+    }
+  };
+
+  const handleWeeklyTestComplete = async (score: number, total: number, answers: Record<number, number>) => {
+    if (!activeWeeklyTest || !state.user) return;
+
+    // Save Attempt
+    const attempt = {
+        testId: activeWeeklyTest.id,
+        testName: activeWeeklyTest.name,
+        userId: state.user.id,
+        userName: state.user.name,
+        startedAt: localStorage.getItem(`weekly_test_start_${activeWeeklyTest.id}`) || new Date().toISOString(),
+        submittedAt: new Date().toISOString(),
+        score: Math.round((score / total) * 100),
+        totalQuestions: total,
+        answers: answers
+    };
+
+    // 1. Local Backup
+    const key = `nst_test_attempts_${state.user.id}`;
+    const attempts = JSON.parse(localStorage.getItem(key) || '{}');
+    attempts[activeWeeklyTest.id] = attempt;
+    localStorage.setItem(key, JSON.stringify(attempts));
+
+    // 2. Firestore Sync (So Admin can see)
+    await saveTestResult(state.user.id, attempt);
+
+    logActivity("TEST_SUBMIT", `Completed ${activeWeeklyTest.name} with score ${score}/${total}`);
+    setActiveWeeklyTest(null);
+
+    // REWARD LOGIC
+    let updatedUser = { ...state.user };
+    let rewardMsg = "";
+
+    // NEW RULE BASED LOGIC
+    const percentage = (score / total) * 100;
+    const isDaily = activeWeeklyTest.id.startsWith('daily-challenge-');
+    const category = isDaily ? 'DAILY_CHALLENGE' : 'WEEKLY_TEST';
+
+    // Fetch rules for this category
+    const eligibleRules = (state.settings.prizeRules || [])
+        .filter(r => r.enabled && r.category === category)
+        .filter(r => percentage >= r.minPercentage)
+        .sort((a, b) => b.minPercentage - a.minPercentage); // Highest difficulty first
+
+    const bestRule = eligibleRules[0];
+
+    if (bestRule) {
+        if (bestRule.rewardType === 'COINS') {
+            updatedUser.credits = (updatedUser.credits || 0) + (bestRule.rewardAmount || 0);
+            rewardMsg = `🏆 Reward Unlocked: ${bestRule.label} (+${bestRule.rewardAmount} Coins)`;
+        } else if (bestRule.rewardType === 'SUBSCRIPTION') {
+            const duration = bestRule.rewardDurationHours || 24;
+            const endDate = new Date(Date.now() + duration * 60 * 60 * 1000).toISOString();
+
+            const newSub: ActiveSubscription = {
+                id: `win-${Date.now()}`,
+                tier: bestRule.rewardSubTier || 'WEEKLY',
+                level: bestRule.rewardSubLevel || 'BASIC',
+                startDate: new Date().toISOString(),
+                endDate: endDate,
+                source: 'REWARD'
+            };
+
+            updatedUser = addSubscription(updatedUser, newSub, state.settings);
+            updatedUser.grantedByAdmin = true;
+            rewardMsg = `🏆 Reward Unlocked: ${bestRule.label}`;
+        }
+    } else {
+        if (isDaily) {
+             rewardMsg = `Daily Challenge Complete. Score: ${Math.round(percentage)}%.`;
+        } else {
+             rewardMsg = "Test Submitted!";
+        }
+    }
+
+    if (!state.originalAdmin) {
+        localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+        await saveUserToLive(updatedUser);
+    }
+    setState(prev => ({...prev, user: updatedUser}));
+    if (rewardMsg) setAlertConfig({isOpen: true, message: rewardMsg});
+
+    // Create Result Object for Marksheet
+    const startTimeStr = localStorage.getItem(`weekly_test_start_${activeWeeklyTest.id}`);
+    const timeTaken = startTimeStr ? (Date.now() - parseInt(startTimeStr)) / 1000 : 0;
+
+    const omrData = activeWeeklyTest.questions.map((q, idx) => ({
+        qIndex: idx,
+        selected: answers[idx] !== undefined ? answers[idx] : -1,
+        correct: q.correctAnswer
+    }));
+
+    const result: MCQResult = {
+        id: `wt-${Date.now()}`,
+        userId: state.user.id,
+        chapterId: activeWeeklyTest.id,
+        subjectId: 'WEEKLY',
+        subjectName: 'Weekly Test',
+        chapterTitle: activeWeeklyTest.name,
+        date: new Date().toISOString(),
+        totalQuestions: total,
+        correctCount: score,
+        wrongCount: total - score,
+        score: score,
+        totalTimeSeconds: timeTaken,
+        averageTimePerQuestion: total > 0 ? timeTaken / total : 0,
+        performanceTag: (score / total) >= 0.8 ? 'EXCELLENT' : (score / total) >= 0.5 ? 'GOOD' : 'BAD',
+        classLevel: activeWeeklyTest.classLevel,
+        omrData: omrData
+    };
+
+    // UPDATE USER HISTORY FOR ANALYTICS
+    updatedUser.mcqHistory = [result, ...(updatedUser.mcqHistory || [])];
+
+    // AUTO-NOTIFICATION LOGIC (Low Score for Weekly Test)
+    if (percentage < 40) {
+        const failureMsg = {
+            id: `fail-alert-wt-${Date.now()}`,
+            text: `⚠️ Alert: You scored only ${Math.round(percentage)}% in "${activeWeeklyTest.name}". Please focus on weak areas.`,
+            date: new Date().toISOString(),
+            read: false,
+            type: 'TEXT'
+        };
+        updatedUser.inbox = [failureMsg, ...(updatedUser.inbox || [])];
+    }
+
+    // Save updated history
+    if (!state.originalAdmin) {
+        localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+        saveUserToLive(updatedUser);
+    }
+    setState(prev => ({...prev, user: updatedUser}));
+
+    setLastTestResult(result);
+    // setAlertConfig({isOpen: true, message: `Test Submitted! You scored ${score}/${total}.\n\n🎁 REWARD UNLOCKED: 24 Hours Free Subscription granted for participating!`});
+
+    // Cleanup Local Timer
+    localStorage.removeItem(`weekly_test_start_${activeWeeklyTest.id}`);
+  };
+
+  // --- SAFE NAVIGATION LOGIC ---
+  const goHome = () => {
+     if (state.user?.role === 'STUDENT' || state.originalAdmin) {
+         setState(prev => ({...prev, view: 'STUDENT_DASHBOARD'}));
+     } else if (state.user?.role === 'ADMIN') {
+         setState(prev => ({...prev, view: 'ADMIN_DASHBOARD'}));
+     }
+  };
+
+  const handlePopupClose = (type: string) => {
+      setPopupQueue(prev => prev.slice(1));
+
+      if (type === 'CHALLENGE') {
+          localStorage.setItem('nst_last_daily_challenge_date', new Date().toDateString());
+      } else if (type === 'WELCOME') {
+          handleStartApp();
+      }
+  };
+
+  const handleStartDailyChallenge = async () => {
+      // 1. Generate Questions
+      if (!state.user) return;
+
+      const config = state.settings.dailyChallengeConfig || { rewardPercentage: 90, mode: 'AUTO', selectedChapterIds: [] };
+      const questions = generateDailyChallengeQuestions(
+          state.user.board || 'CBSE',
+          state.user.classLevel || '10',
+          state.user.stream,
+          config.mode,
+          config.selectedChapterIds || []
+      );
+
+      if (questions.length === 0) {
+          setAlertConfig({isOpen: true, message: "Not enough content to generate a challenge yet. Try browsing some chapters first!"});
+          handlePopupClose('CHALLENGE'); // Close popup anyway
+          return;
+      }
+
+      // 2. Create Test Object
+      const testId = `daily-challenge-${Date.now()}`;
+      const test: WeeklyTest = {
+          id: testId,
+          name: `Daily Challenge (${new Date().toLocaleDateString()})`,
+          description: "Win rewards by scoring high in this challenge!",
+          isActive: true,
+          classLevel: state.user.classLevel || '10',
+          questions: questions,
+          totalQuestions: questions.length,
+          passingScore: Math.ceil((config.rewardPercentage / 100) * questions.length),
+          createdAt: new Date().toISOString(),
+          durationMinutes: 15,
+          autoSubmitEnabled: true
+      };
+
+      // 3. Set Active Test (Starts the test view)
+      setActiveWeeklyTest(test);
+
+      // 4. Mark as Seen and Close Popup
+      localStorage.setItem('nst_last_daily_challenge_date', new Date().toDateString());
+      setPopupQueue(prev => prev.slice(1)); // Manually close popup without triggering handlePopupClose again (which sets storage too)
+  };
+
+  const goBack = () => {
+    // Exit Full Screen if active
+    if (isFullScreen) {
+        setIsFullScreen(false);
+        // If viewing lesson, go back to chapters
+        if (state.view === 'LESSON') {
+             setState(prev => ({ ...prev, view: 'CHAPTERS', lessonContent: null }));
+             return;
+        }
+        // If inside StudentDashboard (e.g. Video Player), we let StudentDashboard handle the back logic
+        // But here we are in App level.
+        // StudentDashboard calls goBack prop?
+        // No, StudentDashboard has its own onBack for players.
+        // Wait, FloatingDock calls goBack which calls this goBack.
+        // If FloatingDock is hidden, user uses the Back button inside the Player (VideoPlaylistView).
+        // That Back button in Player calls `onBack` prop of Player, which calls `setContentViewStep('CHAPTERS')` in StudentDashboard.
+        // It does NOT call this global `goBack`.
+        // So we just need to ensure `isFullScreen` is reset when StudentDashboard exits player.
+    }
+
+    if (activeWeeklyTest) {
+        setConfirmConfig({
+            isOpen: true,
+            title: "Quit Test?",
+            message: "Progress may be lost unless submitted. Are you sure?",
+            onConfirm: () => {
+                setActiveWeeklyTest(null);
+                setConfirmConfig(prev => ({...prev, isOpen: false}));
+            }
+        });
+        return;
+    }
+
+    setState(prev => {
+      // 1. Content -> Chapters
+      if (prev.view === 'LESSON') return { ...prev, view: 'CHAPTERS', lessonContent: null };
+
+      // 2. Chapters -> Dashboard (for Students) OR Subjects (Admin)
+      if (prev.view === 'CHAPTERS') {
+          // If Student, go DIRECTLY to Dashboard. Don't unwind to subjects/boards.
+          if (prev.user?.role === 'STUDENT' || prev.originalAdmin) {
+              return { ...prev, view: 'STUDENT_DASHBOARD', selectedChapter: null, selectedSubject: null };
+          }
+          return { ...prev, view: 'SUBJECTS', selectedChapter: null };
+      }
+
+      // 3. Subjects -> Dashboard (for Students) OR Classes (Admin)
+      if (prev.view === 'SUBJECTS') {
+          // If Student, go DIRECTLY to Dashboard
+          if (prev.user?.role === 'STUDENT' || prev.originalAdmin) {
+              return { ...prev, view: 'STUDENT_DASHBOARD', selectedSubject: null };
+          }
+          return { ...prev, view: ['11','12'].includes(prev.selectedClass||'') ? 'STREAMS' : 'CLASSES', selectedSubject: null };
+      }
+
+      if (prev.view === 'STREAMS') return { ...prev, view: 'CLASSES', selectedStream: null };
+      if (prev.view === 'CLASSES') return { ...prev, view: 'BOARDS', selectedClass: null };
+
+      // 4. Boards -> Dashboard or Admin
+      if (prev.view === 'BOARDS') {
+          const nextView = prev.user?.role === 'ADMIN' ? 'ADMIN_DASHBOARD' : 'STUDENT_DASHBOARD';
+          return { ...prev, view: nextView as any, selectedBoard: null };
+      }
+
+      return { ...prev, view: prev.user?.role === 'ADMIN' ? 'ADMIN_DASHBOARD' as any : 'STUDENT_DASHBOARD' as any };
+    });
+  };
+
+  // --- OFFLINE SCREEN ---
+  if (!isOnline) {
+      return (
+          <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-8 text-center animate-in fade-in">
+              <WifiOff size={80} className="text-red-500 mb-6 animate-pulse" />
+              <h1 className="text-3xl font-black mb-2">Internet Not Connected</h1>
+              <p className="text-slate-400 mb-8 max-w-sm">
+                  Please check your internet connection to load data.
+              </p>
+              <div className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                  {state.settings.footerText || ''}
+              </div>
+          </div>
+      );
+  }
+
+  // --- MAINTENANCE SCREEN ---
+  const isMaintenanceBypassed = sessionStorage.getItem('nst_maintenance_bypassed') === 'true';
+
+  if (isAppLoading) {
+      return <AppLoadingScreen onComplete={() => setIsAppLoading(false)} />;
+  }
+
+  if (state.settings.maintenanceMode && !isMaintenanceBypassed) {
+      return (
+          <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-8 text-center animate-in fade-in">
+              <div className="bg-red-500/10 p-6 rounded-full mb-6 animate-pulse">
+                  <Lock size={64} className="text-red-500" />
+              </div>
+              <h1 className="text-3xl font-black mb-4">Under Maintenance</h1>
+              <p className="text-slate-400 mb-8 max-w-sm leading-relaxed">
+                  {state.settings.maintenanceMessage || "We are currently upgrading our servers. Please check back later."}
+              </p>
+
+              {/* Admin Bypass Code Display */}
+              {(state.user?.role === 'ADMIN' || state.user?.role === 'SUB_ADMIN') && state.settings.maintenanceBypassCode && (
+                  <div className="mb-6 p-3 bg-red-900/30 border border-red-800 rounded-lg">
+                      <p className="text-xs text-red-300 font-bold uppercase mb-1">Admin Access Code</p>
+                      <p className="text-xl font-mono font-black text-red-400 tracking-widest">{state.settings.maintenanceBypassCode}</p>
+                  </div>
+              )}
+
+              {/* Bypass Code Input (Admins Only) */}
+              {(state.user?.role === 'ADMIN' || state.user?.role === 'SUB_ADMIN') && (
+                  <div className="flex gap-2">
+                      <input
+                          type="password"
+                          placeholder="Access Code"
+                          value={mCode}
+                          onChange={e => setMCode(e.target.value)}
+                          className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-xs font-mono text-white focus:border-red-500 outline-none"
+                      />
+                      <button
+                          onClick={() => {
+                              if (state.settings.maintenanceBypassCode && mCode === state.settings.maintenanceBypassCode) {
+                                  // Bypass Logic: Locally disable maintenance mode for this session
+                                  sessionStorage.setItem('nst_maintenance_bypassed', 'true');
+                                  // Force re-render/update
+                                  setState(prev => ({...prev}));
+                              } else {
+                                  alert("Invalid Access Code");
+                              }
+                          }}
+                          className="bg-red-600 text-white px-3 py-2 rounded text-xs font-bold hover:bg-red-700"
+                      >
+                          Unlock
+                      </button>
+                  </div>
+              )}
+          </div>
+      );
+  }
+
+  return (
+    <ErrorBoundary>
+    <div className="min-h-screen flex flex-col bg-white font-sans relative pt-[env(safe-area-inset-top,24px)] pb-[env(safe-area-inset-bottom,0px)]">
+      {/* LOGOUT OVERLAY */}
+      {logoutPending && (
+          <div className="fixed inset-0 z-[9999] bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center text-white">
+              <div className="bg-slate-800 p-8 rounded-3xl border border-slate-700 flex flex-col items-center max-w-sm w-full mx-4 shadow-2xl animate-in zoom-in duration-200">
+                 <div className="w-16 h-16 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center mb-6">
+                     <Cloud size={32} className="animate-pulse" />
+                 </div>
+                 <h2 className="text-xl font-black mb-2 text-center">Saving Your Progress</h2>
+                 <p className="text-slate-400 text-sm text-center mb-6">Please don't close the app. We are securely syncing your data to the cloud.</p>
+
+                 <div className="text-5xl font-black font-mono mb-8 text-blue-400">
+                     {logoutTimeLeft}s
+                 </div>
+
+                 <button
+                     onClick={() => {
+                         setLogoutPending(false);
+                         setLogoutTimeLeft(0);
+                     }}
+                     className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors text-sm"
+                 >
+                     Cancel Logout
+                 </button>
+              </div>
+          </div>
+      )}
+
+      {/* CLOUD RECOVERY MODAL */}
+      {showCloudRecoveryModal && cloudUser && (
+          <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+               <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in duration-200">
+                   <div className="bg-blue-600 p-6 text-white text-center relative">
+                       <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 relative">
+                           <Cloud size={32} className="text-white relative z-10" />
+                           <div className="absolute inset-0 bg-white/20 rounded-full animate-ping"></div>
+                       </div>
+                       <h2 className="text-2xl font-black mb-1">Cloud Backup Found!</h2>
+                       <p className="text-blue-100 text-sm">We found previously saved progress for your account.</p>
+                   </div>
+                   <div className="p-6 space-y-4">
+                       <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-slate-600">
+                           <strong>Cloud Account:</strong> {cloudUser.name} <br/>
+                           <strong>Saved Tests:</strong> {cloudUser.mcqHistory?.length || 0}
+                       </div>
+                       <p className="text-sm font-medium text-slate-700 text-center">Would you like to recover your past data, or start fresh?</p>
+                       <div className="flex flex-col gap-3 mt-6">
+                           <button
+                               onClick={() => {
+                                   if (!state.user) return;
+                                   const mergedUser = { ...state.user, ...cloudUser };
+                                   localStorage.setItem('nst_current_user', JSON.stringify(mergedUser));
+                                   saveUserToLive(mergedUser as User);
+                                   setState(prev => ({...prev, user: mergedUser as User}));
+                                   setCloudUser(null);
+                                   setShowCloudRecoveryModal(false);
+                                   setToastMessage('Data successfully recovered!');
+                               }}
+                               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2"
+                           >
+                               <Cloud size={20} /> Recover My Past Data
+                           </button>
+                           <button
+                               onClick={() => {
+                                   // They want to start fresh, zero out cloud history to match local
+                                   if (state.user) {
+                                      const wipedUser = { ...state.user, mcqHistory: [], testResults: [] };
+                                      saveUserToLive(wipedUser); // overwrite cloud with empty local
+                                   }
+                                   setCloudUser(null);
+                                   setShowCloudRecoveryModal(false);
+                               }}
+                               className="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3.5 rounded-xl transition-all"
+                           >
+                               Start Fresh (Delete Past Data)
+                           </button>
+                       </div>
+                   </div>
+               </div>
+          </div>
+      )}
+
+      {/* STATUS BAR BACKGROUND */}
+      <div className="fixed top-0 left-0 right-0 h-[env(safe-area-inset-top,24px)] bg-slate-900 z-[100]"></div>
+      {/* BOTTOM SAFE AREA BACKGROUND */}
+      <div className="fixed bottom-0 left-0 right-0 h-[env(safe-area-inset-bottom,32px)] bg-slate-900 z-[100]"></div>
+
+      {/* GLOBAL WATERMARK LAYER (FIXED: Single Logo, Configurable Position, Z-Index Low) */}
+      {/* User Requirement: "app ka logo full screen pe dikhega nahi chhota sa... background me hi logo hoga" */}
+      {/* Admin Toggle: state.settings.isWatermarkEnabled */}
+      {state.settings.isWatermarkEnabled !== false && (
+      <div className="fixed inset-0 z-[-1] pointer-events-none overflow-hidden select-none">
+          {state.settings.appLogo && (
+              <img
+                  src={state.settings.appLogo}
+                  alt=""
+                  style={{
+                      width: `${state.settings.watermarkSize || 150}px`,
+                      height: 'auto',
+                      opacity: state.settings.watermarkOpacity || 0.05,
+                      position: 'absolute',
+                      top: state.settings.watermarkPosition?.top || '50%',
+                      left: state.settings.watermarkPosition?.left || '50%',
+                      transform: `translate(-50%, -50%) rotate(${state.settings.watermarkAngle || -10}deg)`,
+                      filter: 'grayscale(100%)'
+                  }}
+              />
+          )}
+
+          {/* OPTION 2: FLOATING USER NAME (If Enabled) */}
+          {(state.user && state.settings.showUserWatermark !== false) && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div
+                    className="text-4xl font-black -rotate-45 whitespace-nowrap pointer-events-none"
+                    style={{ color: state.settings.footerColor ? `${state.settings.footerColor}10` : 'rgba(15, 23, 42, 0.05)' }}
+                  >
+                      {state.user.name} • {state.user.displayId || state.user.id}
+                  </div>
+              </div>
+          )}
+      </div>
+      )}
+
+      {/* GLOBAL LIVE DASHBOARD 1 (TOP) */}
+      {state.settings.bannerConfig?.top?.enabled && showTopBanner && (
+          <div
+            className="text-[10px] font-bold py-1 overflow-hidden relative whitespace-nowrap z-50 transition-all duration-500 ease-in-out"
+            style={{
+                backgroundColor: state.settings.bannerConfig.top.bgColor || '#dc2626',
+                color: state.settings.bannerConfig.top.textColor || '#ffffff',
+                height: showTopBanner ? 'auto' : '0',
+                opacity: showTopBanner ? 1 : 0
+            }}
+          >
+              <div className="animate-marquee inline-block">
+                  {state.settings.bannerConfig.top.text} &nbsp;&nbsp;&bull;&nbsp;&nbsp;
+                  {state.settings.bannerConfig.top.text} &nbsp;&nbsp;&bull;&nbsp;&nbsp;
+                  {state.settings.bannerConfig.top.text}
+              </div>
+          </div>
+      )}
+
+      {/* IMPERSONATION RETURN BUTTON */}
+      {state.originalAdmin && (
+          <div className="fixed bottom-24 right-6 z-[90] animate-bounce">
+              <button onClick={handleReturnToAdmin} className="bg-red-600 text-white font-bold py-3 px-6 rounded-full shadow-2xl flex items-center gap-2 border-4 border-white">
+                  <EyeOff size={20} /> Exit User View
+              </button>
+          </div>
+      )}
+
+      {showTerms && <TermsPopup onClose={handleAcceptTerms} text={state.settings.termsText} />}
+
+      {!isFullScreen && state.view !== 'STUDENT_DASHBOARD' && (
+      <header className="bg-white sticky top-0 z-30 shadow-sm border-b border-slate-100">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+           <div onClick={() => setState(prev => ({ ...prev, view: (state.user?.role === 'ADMIN' || state.user?.role === 'SUB_ADMIN') ? 'ADMIN_DASHBOARD' : 'STUDENT_DASHBOARD' as any }))} className="flex items-center gap-2 cursor-pointer">
+               <div className="flex items-center gap-3">
+                 {state.settings.appLogo ? (
+                   <img
+                     src={state.settings.appLogo}
+                     alt="Logo"
+                     className="w-8 h-8 rounded-lg object-contain"
+                     onError={(e) => {
+                       (e.target as HTMLImageElement).style.display = 'none';
+                     }}
+                   />
+                 ) : (
+                   <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white">
+                     <BrainCircuit size={20} />
+                   </div>
+                 )}
+                 <h1 className="text-xl font-black text-slate-800">{state.settings.appName}</h1>
+               </div>
+           </div>
+           {state.user && (
+               <div className="flex items-center gap-4">
+                   {/* STREAK BADGE */}
+                   {state.user.role !== 'ADMIN' && (
+                       <div className="flex items-center gap-1.5 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-full cursor-help group relative">
+                           <span className="text-lg">🔥</span>
+                           <span className="text-sm font-black text-orange-600">{state.user.streak || 0}</span>
+                           <div className="absolute top-full mt-2 right-0 w-48 bg-slate-900 text-white text-[10px] font-bold p-2 rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 shadow-xl">
+                               Login consecutive days to increase your streak! Current: {state.user.streak || 0} Days
+                           </div>
+                       </div>
+                   )}
+                   <div className="text-right hidden md:block">
+                       <div className="text-xs font-bold text-slate-800">{state.user.name}</div>
+                   </div>
+               </div>
+           )}
+        </div>
+      </header>
+      )}
+
+      <main className={`flex-1 w-full max-w-6xl mx-auto ${isFullScreen ? 'p-0' : 'p-4 mb-8'}`}>
+        {!state.user ? (
+            <Auth onLogin={handleLogin} logActivity={logActivity} />
+        ) : (
+            <ErrorBoundary>
+            <>
+                {state.view === 'ADMIN_DASHBOARD' && (state.user.role === 'ADMIN' || state.user.role === 'SUB_ADMIN') && <AdminDashboard user={state.user} onNavigate={(v) => setState(prev => ({...prev, view: v}))} settings={state.settings} onUpdateSettings={updateSettings} onImpersonate={handleImpersonate} logActivity={logActivity} isDarkMode={darkMode} onToggleDarkMode={setDarkMode} />}
+
+                {/* ACTIVE WEEKLY TEST OVERRIDE */}
+                {activeWeeklyTest ? (
+                    <WeeklyTestView
+                        test={activeWeeklyTest}
+                        onComplete={handleWeeklyTestComplete}
+                        onExit={() => {
+                            setConfirmConfig({
+                                isOpen: true,
+                                title: "Quit Test?",
+                                message: "Are you sure you want to quit the ongoing test?",
+                                onConfirm: () => {
+                                    setActiveWeeklyTest(null);
+                                    setConfirmConfig(prev => ({...prev, isOpen: false}));
+                                }
+                            });
+                        }}
+                    />
+                ) : (
+                    state.view === 'STUDENT_DASHBOARD' as any && (
+                        <StudentDashboard
+                            user={state.user}
+                            dailyStudySeconds={dailyStudySeconds}
+                            onSubjectSelect={handleSubjectSelect}
+                            onRedeemSuccess={u => setState(prev => ({...prev, user: u}))}
+                            settings={state.settings}
+                            onStartWeeklyTest={handleStartWeeklyTest}
+                            activeTab={studentTab}
+                            onTabChange={setStudentTab}
+                            setFullScreen={setIsFullScreen} // PASSED PROP
+                            onNavigate={(v) => setState(prev => ({...prev, view: v}))}
+                            isImpersonating={!!state.originalAdmin}
+                            onNavigateToChapter={handleNavigateToChapterFromHistory}
+                            isDarkMode={darkMode}
+                            onToggleDarkMode={setDarkMode}
+                            onLogout={handleLogout}
+                            onRecoverData={() => {
+                                if (cloudUser) {
+                                    setShowCloudRecoveryModal(true);
+                                } else {
+                                    setToastMessage("Your data is already synced and up to date!");
+                                }
+                            }}
+                        />
+                    )
+                )}
+
+                {(!activeWeeklyTest && state.view === 'BOARDS') && <BoardSelection onSelect={handleBoardSelect} onBack={goBack} />}
+                {state.view === 'ONBOARDING' && state.user && <Onboarding user={state.user} onComplete={handleLogin} onLogout={handleLogout} />}
+                {state.view === 'CLASSES' && <ClassSelection selectedBoard={state.selectedBoard} allowedClasses={state.user?.role === 'ADMIN' ? undefined : state.settings.allowedClasses} settings={state.settings} user={state.user} onSelect={handleClassSelect} onBack={goBack} />}
+                {state.view === 'STREAMS' && <StreamSelection onSelect={handleStreamSelect} onBack={goBack} />}
+                {state.view === 'SUBJECTS' && state.selectedClass && <SubjectSelection classLevel={state.selectedClass} stream={state.selectedStream} board={state.selectedBoard || undefined} onSelect={handleSubjectSelect} onBack={goBack} settings={state.settings} />}
+                {state.view === 'CHAPTERS' && state.selectedSubject && <ChapterSelection chapters={state.chapters} subject={state.selectedSubject} classLevel={state.selectedClass!} loading={state.loading && state.view === 'CHAPTERS'} user={state.user} onSelect={onChapterClick} onBack={goBack}/>}
+                {state.view === 'LESSON' && state.lessonContent && (
+                    <LessonView
+                        content={state.lessonContent}
+                        subject={state.selectedSubject!}
+                        classLevel={state.selectedClass!}
+                        chapter={state.selectedChapter!}
+                        loading={state.loading && !isStreaming}
+                        onBack={goBack}
+                        onMCQComplete={handleMCQComplete}
+                        user={state.user}
+                        settings={state.settings}
+                        isStreaming={isStreaming}
+                        onLaunchContent={(c: any) => handleContentGeneration(c.isPremium ? 'NOTES_PREMIUM' : 'NOTES_HTML_FREE', undefined, false, c)}
+                        onToggleAutoTts={handleToggleAutoTts}
+                    />
+                )}
+            </>
+            </ErrorBoundary>
+        )}
+      </main>
+
+      {/* PERSISTENT FOOTER - Hide in Student Dashboard as it has its own Bottom Nav */}
+      {!isFullScreen && state.view !== 'STUDENT_DASHBOARD' && state.settings.showFooter !== false && (
+      <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 py-1 text-center z-[40]">
+          <p
+            className="text-[10px] font-black uppercase tracking-widest"
+            style={{ color: state.settings.footerColor || '#94a3b8' }}
+          >
+              {state.settings.footerText || ''}
+          </p>
+      </footer>
+      )}
+
+      {/* GLOBAL LIVE DASHBOARD 2 (BOTTOM) */}
+      {state.settings.bannerConfig?.bottom?.enabled && showBottomBanner && (
+          <div
+            className="fixed bottom-6 left-0 right-0 text-[10px] font-bold py-1 overflow-hidden relative whitespace-nowrap z-[39] transition-all duration-500 ease-in-out"
+            style={{
+                backgroundColor: state.settings.bannerConfig.bottom.bgColor || '#2563eb',
+                color: state.settings.bannerConfig.bottom.textColor || '#ffffff',
+                height: showBottomBanner ? 'auto' : '0',
+                opacity: showBottomBanner ? 1 : 0
+            }}
+          >
+              <div className="animate-marquee-reverse inline-block">
+                  {state.settings.bannerConfig.bottom.text} &nbsp;&nbsp;&bull;&nbsp;&nbsp;
+                  {state.settings.bannerConfig.bottom.text} &nbsp;&nbsp;&bull;&nbsp;&nbsp;
+                  {state.settings.bannerConfig.bottom.text}
+              </div>
+          </div>
+      )}
+
+      {state.loading && <LoadingOverlay dataReady={generationDataReady} customMessage={loadingMessage} type={loadingContentType} onComplete={handleLoadingAnimationComplete} />}
+      {showPremiumModal && tempSelectedChapter && state.user && (
+          <PremiumModal
+              user={state.user}
+              chapter={tempSelectedChapter}
+              credits={state.user.credits || 0}
+              isAdmin={state.user.role === 'ADMIN'}
+              onSelect={handleContentGeneration}
+              onClose={() => setShowPremiumModal(false)}
+              board={state.selectedBoard!}
+              classLevel={state.selectedClass!}
+              stream={state.selectedStream}
+              subject={state.selectedSubject!}
+              settings={state.settings}
+              isFlashSaleActive={isFlashSaleActive}
+          />
+      )}
+
+
+      {activeReward && <RewardPopup reward={activeReward} onClaim={handleClaimReward} onIgnore={handleIgnoreReward} />}
+
+      {/* POPUP QUEUE MANAGER */}
+      {/* {popupQueue.length > 0 && !showPremiumModal && !activeWeeklyTest && (
+          <>
+            {popupQueue[0] === 'CHALLENGE' && (
+                <DailyChallengePopup
+                    onStart={handleStartDailyChallenge}
+                    onClose={() => handlePopupClose('CHALLENGE')}
+                    rewardPercentage={state.settings.dailyChallengeConfig?.rewardPercentage || 90}
+                />
+            )}
+          </>
+      )} */}
+
+      {lastTestResult && state.user && (
+          <MarksheetCard
+              result={lastTestResult}
+              user={state.user}
+              settings={state.settings}
+              questions={lastTestQuestions || undefined} // Pass full questions for analysis
+              onClose={() => {
+                  setLastTestResult(null);
+                  setLastTestQuestions(null);
+              }}
+              onLaunchContent={(c: any) => {
+                  setLastTestResult(null);
+                  setLastTestQuestions(null);
+                  handleContentGeneration(c.isPremium ? 'NOTES_PREMIUM' : 'NOTES_HTML_FREE', undefined, false, c);
+              }}
+              onPublish={() => {
+                  const percentage = Math.round((lastTestResult.score / lastTestResult.totalQuestions) * 100);
+                  const activity = {
+                      id: lastTestResult.id,
+                      userId: state.user!.id,
+                      userName: state.user!.name,
+                      testName: lastTestResult.chapterTitle,
+                      score: lastTestResult.score,
+                      total: lastTestResult.totalQuestions,
+                      percentage: percentage,
+                      timestamp: new Date().toISOString()
+                  };
+                  savePublicActivity(activity);
+                  setAlertConfig({isOpen: true, message: "Result published!"});
+              }}
+          />
+      )}
+
+      {creditModal && state.user && (
+          <CreditConfirmationModal
+              title={creditModal.title}
+              cost={creditModal.cost}
+              userCredits={state.user.credits}
+              isAutoEnabledInitial={!!state.user.isAutoDeductEnabled}
+              onConfirm={creditModal.onConfirm}
+              onCancel={() => setCreditModal(null)}
+          />
+      )}
+
+      {/* GLOBAL DIALOGS */}
+      <CustomAlert
+          isOpen={alertConfig.isOpen}
+          message={alertConfig.message}
+          onClose={() => setAlertConfig({...alertConfig, isOpen: false})}
+      />
+      <CustomConfirm
+          isOpen={confirmConfig.isOpen}
+          title={confirmConfig.title}
+          message={confirmConfig.message}
+          onConfirm={confirmConfig.onConfirm}
+          onCancel={() => setConfirmConfig({...confirmConfig, isOpen: false})}
+      />
+
+      {showUpdatePopup && state.settings.latestVersion && state.settings.updateUrl && (
+          <UpdatePopup
+              latestVersion={state.settings.latestVersion}
+              updateUrl={state.settings.updateUrl}
+              launchDate={state.settings.launchDate}
+              gracePeriodDays={state.settings.updateGracePeriodDays}
+              gracePeriod={state.settings.updateGracePeriod}
+              durationSeconds={state.settings.updatePopupDurationSeconds}
+              onClose={() => {
+                  setShowUpdatePopup(false);
+                  localStorage.setItem(`nst_update_dismissed_${state.settings.latestVersion}`, Date.now().toString());
+              }}
+          />
+      )}
+    </div>
+    </ErrorBoundary>
+  );
+};
+export default App;

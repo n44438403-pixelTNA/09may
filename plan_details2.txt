@@ -1,0 +1,21 @@
+Let's see the new request clearly:
+App features controlled by NSTA Control:
+Notes 5 types: QUICK_REVISION, DEEP_DIVE, PREMIUM_NOTES, ADDITIONAL_NOTES, TEACHER_STRATEGY
+MCQ 2 types: MCQ_FREE, MCQ_PREMIUM
+Vidio 2 types: UNIVERSAL_VIDEO, PREMIUM_VIDEO
+Audio: PREMIUM_AUDIO
+Analysis: PREMIUM_ANALYSIS
+AI Tutor: AI_TUTOR
+
+They want "perfectly working lock/unlock, limits/day, coins, Free/Basic/Ultra tier control" based on NSTA Control.
+
+Currently `utils/permissionUtils.ts` has `checkFeatureAccess` which reads from `settings.featureConfig`. This maps perfectly to NSTA Control.
+We need to ensure limits/day are implemented correctly where applicable (e.g. AI Tutor limit, Audio limit? or are limits handled inside the components?).
+
+The user also mentioned:
+"App open higa to welcom likh raha hai bolega bhi welcom to app ka naam." (App opening will play audio saying welcome).
+"student manu ko aur chhota karana hai aur profatnallook dena hai" (Redesign student menu).
+"app me timer bhi chakega global" (Global timer).
+"wo daily jo bhi day higa 1 baar wish jarega aur pop up me wo bhi close karne ke baad dunara na aatega pop uo ùsh din" (Daily wish popup).
+
+I will update `utils/permissionUtils.ts` if needed, but it seems `checkFeatureAccess` already handles NSTA configuration perfectly if the features are in `ALL_FEATURES`. We just added them. Let's check `App.tsx` or `PdfView.tsx` to ensure `checkFeatureAccess` is actually used for all these features.

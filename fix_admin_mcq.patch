@@ -1,0 +1,20 @@
+--- components/AdminDashboard.tsx
++++ components/AdminDashboard.tsx
+@@ -8390,7 +8390,7 @@
+                           <div className="flex justify-between items-center mb-4 mt-2">
+                               <p className="text-xs font-bold text-indigo-800 uppercase tracking-wider">Saved Homework ({(localSettings.homework || []).length})</p>
+-                              <button onClick={() => handleSaveSettings()} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-xs shadow hover:bg-indigo-700 flex items-center gap-2 transition-colors">
++                              <button onClick={() => {
++                                  const updated = (localSettings.homework || []).map(hw => {
++                                      if (hw.mcqText && hw.mcqText.trim()) {
++                                          const parsed = parseMCQText(hw.mcqText.trim());
++                                          return { ...hw, parsedMcqs: parsed.questions };
++                                      }
++                                      return { ...hw, parsedMcqs: [] };
++                                  });
++                                  setLocalSettings({...localSettings, homework: updated});
++                                  handleSaveSettings({...localSettings, homework: updated});
++                                  setAlertConfig({isOpen: true, message: '✅ Edits Saved Successfully!'});
++                              }} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-xs shadow hover:bg-indigo-700 flex items-center gap-2 transition-colors">
+                                   <Save size={14} /> Save Edits
+                               </button>

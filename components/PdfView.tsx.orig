@@ -1,0 +1,1755 @@
+import React, { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import { Chapter, User, Subject, SystemSettings, HtmlModule, PremiumNoteSlot, DeepDiveEntry, AdditionalNoteEntry } from '../types';
+import { FileText, Lock, ArrowLeft, Crown, Star, CheckCircle, AlertCircle, Globe, Maximize, Minimize, Layers, HelpCircle, Minus, Plus, Volume2, Square, Zap, Headphones, BookOpen, Music, Play, Pause, SkipForward, SkipBack, Book, List, Layout, ExternalLink, GraduationCap } from 'lucide-react';
+import { CustomAlert } from './CustomDialogs';
+import { getChapterData, saveUserToLive } from '../firebase';
+import { CreditConfirmationModal } from './CreditConfirmationModal';
+import { AiInterstitial } from './AiInterstitial';
+import { InfoPopup } from './InfoPopup';
+import { SpeakButton } from './SpeakButton';
+import { ErrorBoundary } from './ErrorBoundary';
+import { DEFAULT_CONTENT_INFO_CONFIG } from '../constants';
+import { checkFeatureAccess } from '../utils/permissionUtils';
+import { speakText, stopSpeech } from '../utils/textToSpeech';
+import { saveOfflineItem } from '../utils/offlineStorage';
+import { Download } from 'lucide-react';
+
+interface Props {
+  chapter: Chapter;
+  subject: Subject;
+  user: User;
+  board: string;
+  classLevel: string;
+  stream: string | null;
+  onBack: () => void;
+  onUpdateUser: (user: User) => void;
+  settings?: SystemSettings;
+  initialSyllabusMode?: 'SCHOOL' | 'COMPETITION';
+  directResource?: { url: string, access: string };
+}
+
+// Helper to remove leading/trailing artifacts like quotes, HTML entities, emojis, and dashes from Quick Revision points
+const cleanArtifacts = (text: string): string => {
+    let cleanText = text;
+    let prevText = "";
+
+    // First, decode common HTML entities that might render as text
+    cleanText = cleanText.replace(/&nbsp;/g, ' ').replace(/&#160;/g, ' ');
+
+    while (cleanText !== prevText) {
+        prevText = cleanText;
+        // Leading symbols
+        cleanText = cleanText.replace(/^['">\-\s🔁🔄📌💡📝⚡]+/, '').trim();
+        // Leading HTML entities
+        cleanText = cleanText.replace(/^(?:&gt;|&lt;|&amp;gt;|&quot;|&apos;)/i, '').trim();
+        // Literal trigger words that might have bled through if tags were mismatched
+        cleanText = cleanText.replace(/^(?:Quick Revision|Mini Revision|Recap|Summary|Key Points|महत्वपूर्ण बिंदु|सार|संशोधन|तथ्य|Topic Quick Recap)\s*:/i, '').trim();
+        // Trailing empty HTML tags or breaks
+        cleanText = cleanText.replace(/(?:<br\s*\/?>|\s)+$/i, '').trim();
+        cleanText = cleanText.replace(/(?:<b>\s*<\/b>|<strong>\s*<\/strong>|<p>\s*<\/p>)$/i, '').trim();
+        // Trailing dashes or dots if it's clearly a visual artifact and not a sentence end
+        // Let's be careful with dots, but trailing dashes or quotes can go.
+        cleanText = cleanText.replace(/['"\-\s🔁🔄📌💡📝⚡]+$/, '').trim();
+    }
+
+    return cleanText;
+};
+
+// Helper to format Google Drive links for embedding
+const formatDriveLink = (link: string) => {
+    if (!link) return '';
+    // If it's a view link, convert to preview
+    let formatted = link;
+    if (link.includes('drive.google.com') && (link.includes('/view') || link.endsWith('/view'))) {
+        formatted = link.replace(/\/view.*/, '/preview');
+    }
+
+    // Add parameters to suppress UI (Minimal Mode)
+    if (formatted.includes('drive.google.com')) {
+        // Remove existing parameters if any to avoid duplicates
+        // Append rm=minimal to hide header/toolbar
+        if (!formatted.includes('rm=minimal')) {
+            formatted += formatted.includes('?') ? '&rm=minimal' : '?rm=minimal';
+        }
+    }
+
+    // NotebookLM (pass-through)
+    if (formatted.includes('notebooklm.google.com')) {
+        return formatted;
+    }
+
+    return formatted;
+};
+
+// Helper to split HTML content into topics (SAFE)
+const extractTopicsFromHtml = (html: string): { title: string, content: string }[] => {
+    if (!html) return [];
+
+    try {
+        // Create a temporary element to parse HTML
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+
+        const topics: { title: string, content: string }[] = [];
+        let currentTitle = "Introduction";
+        let currentContent: string[] = [];
+
+        const children = Array.from(tempDiv.children);
+
+        // Fallback if no children (raw text)
+        if (children.length === 0 && html.trim().length > 0) {
+            return [{ title: "Notes", content: html }];
+        }
+
+        children.forEach((child) => {
+            const tagName = child.tagName.toLowerCase();
+            if (tagName === 'h1' || tagName === 'h2') {
+                // Push previous topic if exists
+                if (currentContent.length > 0) {
+                    topics.push({
+                        title: currentTitle || "Untitled Topic",
+                        content: currentContent.join(""),
+                    });
+                    currentContent = [];
+                }
+                currentTitle = child.textContent || "Untitled Topic";
+            } else {
+                currentContent.push(child.outerHTML);
+            }
+        });
+
+        // Push the last topic
+        if (currentContent.length > 0 || topics.length === 0) {
+            topics.push({
+                title: currentTitle || "Untitled Topic",
+                content: currentContent.join(""),
+            });
+        }
+
+        return topics;
+    } catch (e) {
+        console.error("HTML Parsing Error (Safe Fallback):", e);
+        // Fallback to single safe block
+        return [{ title: "Content Error", content: "Error displaying formatted notes. Please contact admin." }];
+    }
+};
+
+export const PdfView: React.FC<Props> = ({
+  chapter, subject, user, board, classLevel, stream, onBack, onUpdateUser, settings, initialSyllabusMode, directResource
+}) => {
+  const [contentData, setContentData] = useState<any>({});
+  const [loading, setLoading] = useState(true);
+  const [syllabusMode, setSyllabusMode] = useState<'SCHOOL' | 'COMPETITION'>(initialSyllabusMode || 'SCHOOL');
+  const [activePdf, setActivePdf] = useState<string | null>(null);
+  const [activeNoteContent, setActiveNoteContent] = useState<{title: string, content: string, pdfUrl?: string, audioUrl?: string} | null>(null); // NEW: HTML Note Content + Optional PDF
+  const [activeLang, setActiveLang] = useState<'ENGLISH' | 'HINDI'>('ENGLISH');
+  const [pendingPdf, setPendingPdf] = useState<{type: string, price: number, link: string, tts?: string} | null>(null);
+
+  // NEW: TAB STATE
+  const [activeTab, setActiveTab] = useState<'QUICK' | 'DEEP_DIVE' | 'PREMIUM' | 'RESOURCES' | 'TEACHER'>('QUICK');
+  const [sessionUnlockedTabs, setSessionUnlockedTabs] = useState<string[]>([]);
+  const [quickRevisionPoints, setQuickRevisionPoints] = useState<{title: string, points: string[]}[]>([]);
+  const [currentPremiumEntryIdx, setCurrentPremiumEntryIdx] = useState(0);
+
+  // SCROLL TO HIDE HEADER STATE
+  const [showHeader, setShowHeader] = useState(true);
+  const lastScrollY = useRef(0);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+      const currentScrollY = e.currentTarget.scrollTop;
+      if (currentScrollY > lastScrollY.current + 10 && currentScrollY > 50) {
+          setShowHeader(false); // Scrolling down
+      } else if (currentScrollY < lastScrollY.current - 10 || currentScrollY < 50) {
+          setShowHeader(true); // Scrolling up
+      }
+      lastScrollY.current = currentScrollY;
+  };
+
+  // PREMIUM TTS STATE
+  const [premiumChunks, setPremiumChunks] = useState<string[]>([]);
+  const [premiumChunkIndex, setPremiumChunkIndex] = useState(0);
+
+  // DEEP DIVE STATE
+  const [isDeepDiveMode, setIsDeepDiveMode] = useState(false);
+  const [deepDiveTopics, setDeepDiveTopics] = useState<{ title: string, content: string, audioUrl?: string }[]>([]);
+  const [activeTopicIndex, setActiveTopicIndex] = useState(0);
+  const [isAutoPlaying, setIsAutoPlaying] = useState(false);
+  const [topicSpeakingState, setTopicSpeakingState] = useState<number | null>(null); // Index of topic currently speaking
+
+  // TEACHER STRATEGY STATE
+  const [currentStrategyIndex, setCurrentStrategyIndex] = useState(0);
+
+  // ZOOM STATE
+  const [zoom, setZoom] = useState(1);
+  const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.25, 3));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.25, 0.5));
+
+  // INFO POPUP STATE
+  const [infoPopup, setInfoPopup] = useState<{isOpen: boolean, config: any, type: 'FREE' | 'PREMIUM'}>({isOpen: false, config: {}, type: 'FREE'});
+
+  // TTS STATE (Global)
+  const [speechRate, setSpeechRate] = useState(1.0);
+
+  const getFeatureIdForTab = (tab: string) => {
+      switch(tab) {
+          case 'QUICK': return 'QUICK_REVISION';
+          case 'DEEP_DIVE': return 'DEEP_DIVE';
+          case 'PREMIUM': return 'PREMIUM_NOTES';
+          case 'RESOURCES': return 'ADDITIONAL_NOTES';
+          case 'TEACHER': return 'TEACHER_STRATEGY';
+          default: return 'QUICK_REVISION';
+      }
+  };
+
+  const getTabAccess = (tabId: string) => {
+      // 1. Admin / Bypass
+      if (user.role === 'ADMIN') return { hasAccess: true, cost: 0, reason: 'ADMIN' };
+      if (user.unlockedContent && user.unlockedContent.includes(chapter.id)) return { hasAccess: true, cost: 0, reason: 'CHAPTER_UNLOCKED' };
+
+      // 2. Session Unlock
+      if (sessionUnlockedTabs.includes(tabId)) return { hasAccess: true, cost: 0, reason: 'SESSION_UNLOCKED' };
+
+      // Special handling for RESOURCES/Additional Notes to guarantee ULTRA and BASIC have access
+      if (tabId === 'RESOURCES' && (user.subscriptionLevel === 'ULTRA' || user.subscriptionLevel === 'BASIC')) {
+          return { hasAccess: true, cost: 0, reason: 'PREMIUM_OVERRIDE' };
+      }
+
+      // 3. Use NSTA Control (checkFeatureAccess) for all tabs
+      const featureId = getFeatureIdForTab(tabId);
+      const accessObj = checkFeatureAccess(featureId, user, settings || {});
+
+      if (!accessObj.hasAccess) {
+          return { hasAccess: false, cost: accessObj.cost || 0, reason: accessObj.reason || 'LOCKED' };
+      }
+
+      // 4. Require Credits if configured
+      if (accessObj.cost > 0 && !sessionUnlockedTabs.includes(tabId)) {
+          return { hasAccess: false, cost: accessObj.cost, reason: 'CREDITS_REQUIRED' };
+      }
+
+      return { hasAccess: true, cost: 0, reason: 'GRANTED' };
+  };
+
+  const formatAudioUrl = (url: string) => {
+      if (!url) return '';
+      if (url.includes('drive.google.com/file/d/')) {
+          const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          if (match && match[1]) {
+              return `https://docs.google.com/uc?export=download&id=${match[1]}`;
+          }
+      }
+      return url;
+  };
+
+  const playCustomAudio = (url: string) => {
+      const formattedUrl = formatAudioUrl(url);
+      stopAllSpeech(); // Stop TTS if running
+
+      const existingAudio = document.getElementById('custom-audio-player') as HTMLAudioElement;
+      if (existingAudio) {
+          if (existingAudio.src === formattedUrl || existingAudio.src === url) {
+              if (!existingAudio.paused) {
+                  existingAudio.pause();
+              } else {
+                  existingAudio.play();
+              }
+              return;
+          } else {
+              existingAudio.pause();
+              existingAudio.remove();
+          }
+      }
+
+      const audio = new Audio(formattedUrl);
+      audio.id = 'custom-audio-player';
+      audio.play();
+      document.body.appendChild(audio);
+      audio.onended = () => audio.remove();
+  };
+
+
+
+  const stopAllSpeech = () => {
+      stopSpeech();
+      setIsAutoPlaying(false);
+      setTopicSpeakingState(null);
+      setPremiumChunks([]);
+      setPremiumChunkIndex(0);
+  };
+
+  useEffect(() => {
+    return () => stopAllSpeech();
+  }, [activePdf, isDeepDiveMode, activeTab]);
+
+  // PREMIUM AUTO-PLAY LOGIC (Chunked)
+  useEffect(() => {
+      if (isAutoPlaying && activeTab === 'PREMIUM' && premiumChunks.length > 0) {
+          if (premiumChunkIndex < premiumChunks.length) {
+              speakText(
+                  premiumChunks[premiumChunkIndex],
+                  null,
+                  speechRate,
+                  'hi-IN',
+                  undefined,
+                  () => {
+                      // On Chunk End
+                      if (isAutoPlaying) { // Ensure user hasn't stopped it
+                          if (premiumChunkIndex + 1 < premiumChunks.length) {
+                              setPremiumChunkIndex(prev => prev + 1);
+                          } else {
+                              setIsAutoPlaying(false);
+                              setPremiumChunkIndex(0);
+                          }
+                      }
+                  }
+              );
+          }
+      }
+  }, [isAutoPlaying, premiumChunkIndex, activeTab, premiumChunks]);
+
+  // DEEP DIVE AUTO-PLAY LOGIC
+  useEffect(() => {
+      if (isAutoPlaying && activeTab === 'DEEP_DIVE' && deepDiveTopics.length > 0) {
+          const currentIndex = activeTopicIndex; // Start from current viewed
+
+          if (currentIndex < deepDiveTopics.length) {
+              const topic = deepDiveTopics[currentIndex];
+              setTopicSpeakingState(currentIndex);
+
+              // Scroll to topic
+              document.getElementById(`topic-card-${currentIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+              speakText(
+                  topic.content, // speakText strips HTML automatically
+                  null,
+                  speechRate,
+                  'hi-IN',
+                  undefined,
+                  () => {
+                      // On End
+                      if (isAutoPlaying) {
+                          if (currentIndex + 1 < deepDiveTopics.length) {
+                              setActiveTopicIndex(currentIndex + 1);
+                          } else {
+                              setIsAutoPlaying(false);
+                              setTopicSpeakingState(null);
+                          }
+                      }
+                  }
+              );
+          }
+      }
+  }, [isAutoPlaying, activeTopicIndex, activeTab]); // Trigger when index updates in auto mode
+
+  const handleTopicPlay = (index: number) => {
+      if (topicSpeakingState === index) {
+          // Pause/Stop
+          stopSpeech();
+          setTopicSpeakingState(null);
+          setIsAutoPlaying(false);
+      } else {
+          // Play specific topic
+          stopSpeech();
+          setIsAutoPlaying(false); // Disable auto-sequence
+          setTopicSpeakingState(index);
+          const topic = deepDiveTopics[index];
+          speakText(
+              topic.content,
+              null,
+              speechRate,
+              'hi-IN',
+              undefined,
+              () => setTopicSpeakingState(null)
+          );
+      }
+  };
+
+  const pdfContainerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+      const handleFullscreenChange = () => {
+          setIsFullscreen(!!document.fullscreenElement);
+      };
+      document.addEventListener('fullscreenchange', handleFullscreenChange);
+      return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullScreen = () => {
+      if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(err => console.error(err));
+      } else {
+          document.exitFullscreen();
+      }
+  };
+
+  // Interstitial State
+  const [showInterstitial, setShowInterstitial] = useState(false);
+  const [pendingLink, setPendingLink] = useState<string | null>(null);
+  const [pendingTts, setPendingTts] = useState<string | null>(null);
+
+  // Alert
+  const [alertConfig, setAlertConfig] = useState<{isOpen: boolean, message: string}>({isOpen: false, message: ''});
+
+  // DEEP DIVE AUTO-OPEN ZEN MODE LOGIC
+  // Moved to top level to avoid React Hook Error #310
+  const deepDiveAccess = getTabAccess('DEEP_DIVE');
+  useEffect(() => {
+      if (activeTab === 'DEEP_DIVE' && deepDiveAccess.hasAccess) {
+          // Auto open first premium content
+          handlePdfClick('PREMIUM');
+      }
+  }, [activeTab, deepDiveAccess.hasAccess]);
+
+  // Data Fetching & Processing
+  useEffect(() => {
+    if (directResource) {
+        setLoading(false);
+        setActivePdf(directResource.url);
+        return;
+    }
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const streamKey = (classLevel === '11' || classLevel === '12') && stream ? `-${stream}` : '';
+        const key = `nst_content_${board}_${classLevel}${streamKey}_${subject.name}_${chapter.id}`;
+        let data = await getChapterData(key);
+        if (!data) {
+            const stored = localStorage.getItem(key);
+            if (stored) data = JSON.parse(stored);
+        }
+        setContentData(data || {});
+
+        // PROCESS NEW CONTENT STRUCTURE (SAFE)
+        if (data) {
+            // Determine Entries based on Mode
+            let entries: DeepDiveEntry[] = [];
+            if (syllabusMode === 'SCHOOL') {
+                entries = data.schoolDeepDiveEntries || data.deepDiveEntries || [];
+            } else {
+                entries = data.competitionDeepDiveEntries || [];
+            }
+
+            let quickEntries: {id: string, title: string, content: string}[] = [];
+            if (syllabusMode === 'SCHOOL') {
+                quickEntries = data.schoolQuickNotes || data.quickNotes || [];
+            } else {
+                quickEntries = data.competitionQuickNotes || [];
+            }
+
+            // 1. QUICK REVISION EXTRACTION
+            // Include legacy deep dive HTML and new entries
+            const legacyDeepDiveHtml = syllabusMode === 'SCHOOL' ? data.deepDiveNotesHtml : data.competitionDeepDiveNotesHtml;
+            const extractionSources = [...entries.map(e => ({ title: e.title, htmlContent: e.htmlContent }))];
+            if (legacyDeepDiveHtml) {
+                extractionSources.push({ title: "Deep Dive Notes", htmlContent: legacyDeepDiveHtml });
+            }
+
+            // Also add Quick Notes explicitly as their own group
+            const quickGroups: {title: string, points: string[]}[] = [];
+
+            if (quickEntries && quickEntries.length > 0) {
+                quickEntries.forEach(entry => {
+                    if (entry.content && entry.content.trim().length > 0) {
+                        // For explicitly authored Quick Notes from the Admin Dashboard,
+                        // we render the raw HTML content directly to give full formatting control
+                        // just like Deep Dive or Additional Notes.
+                        quickGroups.push({
+                            title: entry.title || "Quick Notes",
+                            points: [entry.content.trim()]
+                        });
+                    }
+                });
+            }
+
+            // Also check the raw HTML arrays directly to be sure we get everything
+            if (data.schoolQuickNotesHtml && syllabusMode === 'SCHOOL') {
+                extractionSources.push({ title: "Quick Notes (Legacy)", htmlContent: data.schoolQuickNotesHtml });
+            }
+            if (data.competitionQuickNotesHtml && syllabusMode === 'COMPETITION') {
+                extractionSources.push({ title: "Quick Notes (Legacy)", htmlContent: data.competitionQuickNotesHtml });
+            }
+            if (data.quickNotesHtml) {
+                extractionSources.push({ title: "Quick Notes (Legacy)", htmlContent: data.quickNotesHtml });
+            }
+
+            try {
+                extractionSources.forEach((entry, index) => {
+                    if (entry.htmlContent) {
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = entry.htmlContent;
+
+                        // Look for a fallback title if entry.title is undefined.
+                        // Many NCERT-style HTML files start with an <h2> or <h3>
+                        let topicTitle = entry.title?.trim();
+                        if (!topicTitle) {
+                            const firstHeading = tempDiv.querySelector('h1, h2, h3, h4');
+                            if (firstHeading && firstHeading.textContent) {
+                                topicTitle = firstHeading.textContent.trim();
+                            } else {
+                                topicTitle = `Topic ${index + 1}`;
+                            }
+                        }
+
+                        const currentTopicPoints: string[] = [];
+
+                        // 0. High priority: Check for explicitly structured AI output like <div class="recap"><ul><li>
+                        const structuredRecaps = tempDiv.querySelectorAll('.recap, .quick-revision, [data-type="recap"]');
+                        if (structuredRecaps && structuredRecaps.length > 0) {
+                            structuredRecaps.forEach(div => {
+                                const listItems = div.querySelectorAll('li');
+                                if (listItems.length > 0) {
+                                    listItems.forEach(li => {
+                                        const cleanHtml = li.innerHTML.trim();
+                                        if (cleanHtml && !currentTopicPoints.some(qp => qp.includes(cleanHtml) || cleanHtml.includes(qp))) {
+                                            currentTopicPoints.push(`<b>Recap:</b> ${cleanHtml}`);
+                                        }
+                                    });
+                                } else {
+                                    // Handle cases where it's a div with a title and <br> separator
+                                    const clone = div.cloneNode(true) as HTMLElement;
+                                    const titleElement = clone.querySelector('b, strong, h3, h4');
+                                    let title = 'Recap';
+                                    if (titleElement && titleElement.textContent) {
+                                        let rawTitle = titleElement.textContent;
+                                        title = cleanArtifacts(rawTitle) || 'Recap';
+                                        titleElement.remove();
+                                    }
+                                    let cleanHtml = clone.innerHTML.trim();
+                                    // Remove trailing or leading breaks
+                                    cleanHtml = cleanHtml.replace(/^(?:<br\s*\/?>\s*)+/i, '').trim();
+                                    cleanHtml = cleanHtml.replace(/(?:<br\s*\/?>\s*)+$/i, '').trim();
+
+
+                                    cleanHtml = cleanArtifacts(cleanHtml);
+
+
+                                    // Clean up AI conversational prefixes
+                                    const aiPrefixes = /^(?:here is a|here's a|let's|let us)?\s*(?:quick revision|mini revision|recap|summary|brief recap)(?:\s+of (?:the )?(?:topic|lesson|chapter))?\s*:?\s*/i;
+                                    cleanHtml = cleanHtml.replace(aiPrefixes, '').trim();
+
+                                    cleanHtml = cleanArtifacts(cleanHtml);
+
+
+
+                                    if (cleanHtml && cleanHtml.length > 5 && !currentTopicPoints.some(qp => qp.includes(cleanHtml) || cleanHtml.includes(qp))) {
+                                        currentTopicPoints.push(`<b>${title}:</b> ${cleanHtml}`);
+                                    }
+                                }
+                            });
+                        }
+
+                        // 1. DOM based extraction logic (handles headers + lists or direct paragraphs)
+                        const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_ELEMENT, {
+                            acceptNode: (node: Element) => {
+                                const tag = node.tagName.toLowerCase();
+                                // Skip elements we already extracted via structured classes
+                                if (node.closest('.recap') || node.closest('.quick-revision') || node.closest('[data-type="recap"]')) {
+                                    return NodeFilter.FILTER_SKIP;
+                                }
+                                if (['p', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+                                    return NodeFilter.FILTER_ACCEPT;
+                                }
+                                return NodeFilter.FILTER_SKIP;
+                            }
+                        });
+
+                        let currentNode = walker.nextNode() as Element | null;
+                        while (currentNode) {
+                            const text = currentNode.textContent || '';
+                            const lowerText = text.toLowerCase();
+
+                            // Check if the current node contains a trigger word
+                            const triggerRegex = /(quick revision|mini revision|recap|summary|key points|महत्वपूर्ण बिंदु|सार|संशोधन|तथ्य|topic quick recap)/i;
+                            if (triggerRegex.test(lowerText)) {
+
+                                // Avoid re-extracting the overall topic title if it contains the word "revision" by accident
+                                if (currentNode.textContent?.trim().toLowerCase() === topicTitle.toLowerCase()) {
+                                    currentNode = walker.nextNode() as Element | null;
+                                    continue;
+                                }
+
+                                // Extract the matched text to prefix it
+                                const match = lowerText.match(triggerRegex);
+                                const prefix = match ? match[1].replace(/\b\w/g, c => c.toUpperCase()) : 'Revision';
+
+                                if (/^h[1-6]$/.test(currentNode.tagName.toLowerCase())) {
+                                    // Found a header (e.g., <h3>Recap</h3>) - grab the next structural element
+                                    let nextSibling = currentNode.nextElementSibling;
+
+                                    // Skip non-content tags
+                                    while (nextSibling && !['p', 'ul', 'ol', 'div', 'blockquote'].includes(nextSibling.tagName.toLowerCase())) {
+                                        nextSibling = nextSibling.nextElementSibling;
+                                    }
+
+                                    if (nextSibling) {
+                                        if (['ul', 'ol'].includes(nextSibling.tagName.toLowerCase())) {
+                                            // Extract all list items
+                                            const listItems = Array.from(nextSibling.querySelectorAll('li'));
+                                            listItems.forEach(li => {
+                                                let cleanLiHtml = cleanArtifacts(li.innerHTML.trim());
+                                                if (cleanLiHtml && !currentTopicPoints.some(qp => qp.includes(cleanLiHtml) || cleanLiHtml.includes(qp))) {
+                                                    currentTopicPoints.push(`<b>${prefix}:</b> ${cleanLiHtml}`);
+                                                }
+                                            });
+                                        } else {
+                                            // Extract a block of text
+                                            let cleanBlockHtml = cleanArtifacts(nextSibling.innerHTML.trim());
+                                            if (cleanBlockHtml && !currentTopicPoints.some(qp => qp.includes(cleanBlockHtml) || cleanBlockHtml.includes(qp))) {
+                                                currentTopicPoints.push(`<b>${prefix}:</b> ${cleanBlockHtml}`);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Found the phrase inside a paragraph/div (e.g., <p><strong>Recap:</strong> The cell is...</p>)
+                                    const cleanHtml = currentNode.innerHTML.trim();
+                                    // Remove the trigger word and any leading symbols/emojis (like > 🔁) to prevent doubling up and artifacts
+                                    const replaceRegex = new RegExp(`(?:<b>|<strong>)?\\s*[\\u2700-\\u27BF\\uE000-\\uF8FF\\u2011-\\u26FF\\>\\s]*(${triggerRegex.source})[\\u2700-\\u27BF\\uE000-\\uF8FF\\u2011-\\u26FF\\>\\s]*:?\\s*(?:<\\/b>|<\\/strong>)?`, 'gi');
+                                    let strippedHtml = cleanHtml.replace(replaceRegex, '').trim();
+                                    // Secondary clean up for leading non-alphanumeric chars (e.g., '> Recap' -> 'Recap')
+
+                                    strippedHtml = cleanArtifacts(strippedHtml);
+
+
+                                    strippedHtml = strippedHtml.replace(/^[>\s🔁🔄📌💡📝]+/, '').trim();
+                                    // Handle HTML entities like &gt;
+                                    strippedHtml = strippedHtml.replace(/^(?:&gt;|>)/, '').trim();
+                                    // Clean up AI conversational garbage
+                                    const aiPrefixesDOM = /^(?:here is a|here's a|let's|let us)?\s*(?:quick revision|mini revision|recap|summary|brief recap)(?:\s+of (?:the )?(?:topic|lesson|chapter))?\s*:?\s*/i;
+                                    strippedHtml = strippedHtml.replace(aiPrefixesDOM, '').trim();
+
+                                    strippedHtml = cleanArtifacts(strippedHtml);
+
+
+
+                                    if (strippedHtml && strippedHtml.length > 5 && !currentTopicPoints.some(qp => qp.includes(strippedHtml) || strippedHtml.includes(qp.replace(/<(?:b|strong)>.*?(?:<\/b>|<\/strong>)/gi, '').trim()))) {
+                                         currentTopicPoints.push(`<b>${prefix}:</b> ${strippedHtml}`);
+                                    } else if (strippedHtml.length <= 5) {
+                                        // The paragraph just acted as a header (e.g. <p>>🔁 Recap</p>)
+                                        // We need to look at the next sibling to find the actual list or content!
+                                        let nextSibling = currentNode.nextElementSibling;
+                                        while (nextSibling && !['p', 'ul', 'ol', 'div', 'blockquote'].includes(nextSibling.tagName.toLowerCase())) {
+                                            nextSibling = nextSibling.nextElementSibling;
+                                        }
+                                        if (nextSibling) {
+                                            if (['ul', 'ol'].includes(nextSibling.tagName.toLowerCase())) {
+                                                const listItems = Array.from(nextSibling.querySelectorAll('li'));
+                                                listItems.forEach(li => {
+                                                    let cleanLiHtml = cleanArtifacts(li.innerHTML.trim());
+                                                    if (cleanLiHtml && !currentTopicPoints.some(qp => qp.includes(cleanLiHtml) || cleanLiHtml.includes(qp))) {
+                                                        currentTopicPoints.push(`<b>${prefix}:</b> ${cleanLiHtml}`);
+                                                    }
+                                                });
+                                            } else {
+                                                let cleanBlockHtml = cleanArtifacts(nextSibling.innerHTML.trim());
+                                                if (cleanBlockHtml && !currentTopicPoints.some(qp => qp.includes(cleanBlockHtml) || cleanBlockHtml.includes(qp))) {
+                                                    currentTopicPoints.push(`<b>${prefix}:</b> ${cleanBlockHtml}`);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            currentNode = walker.nextNode() as Element | null;
+                        }
+
+                        // 2. Fallback regex approach (catches inline stuff the walker might miss)
+                        // Note: added support for emojis and special chars in the prefix matching
+                        const fallbackRegex = new RegExp(`(?:<b>|<strong>)?\\s*[\\u2700-\\u27BF\\uE000-\\uF8FF\\u2011-\\u26FF\\>\\s]*(Quick Revision|Mini Revision|Recap|Summary|Key Points|महत्वपूर्ण बिंदु|सार|संशोधन|तथ्य|Topic Quick Recap)[\\u2700-\\u27BF\\uE000-\\uF8FF\\u2011-\\u26FF\\>\\s]*:?\\s*(?:<\\/b>|<\\/strong>)?\\s*(?:<br\\s*\\/?>)?\\s*([\\s\\S]*?)(?:<br\\/?>|<\\/p>|<hr\\/?>|<\\/div>|$)`, 'gi');
+                        let matchRegex;
+                        while ((matchRegex = fallbackRegex.exec(entry.htmlContent)) !== null) {
+                            if (matchRegex[2] && matchRegex[2].trim().length > 0) {
+                                let cleanMatch = cleanArtifacts(matchRegex[2].trim());
+                                // Ignore if it accidentally captured a huge block of HTML due to greedy matching
+                                if (cleanMatch.length > 5 && cleanMatch.length < 500 && !currentTopicPoints.some(qp => qp.includes(cleanMatch) || cleanMatch.includes(qp.replace(/<(?:b|strong)>.*?(?:<\/b>|<\/strong>)/gi, '').trim()))) {
+                                    currentTopicPoints.push(`<b>${matchRegex[1]}:</b> ${cleanMatch}`);
+                                }
+                            }
+                        }
+
+                        if (currentTopicPoints.length > 0) {
+                            quickGroups.push({ title: topicTitle, points: currentTopicPoints });
+                        }
+                    }
+                });
+            } catch(e) {
+                console.error("Quick Revision Extraction Error:", e);
+            }
+            setQuickRevisionPoints(quickGroups);
+
+            // 2. DEEP DIVE TOPICS AGGREGATION
+            // Combine all entries
+            let allTopics: { title: string, content: string, audioUrl?: string }[] = [];
+
+            try {
+                // If legacy Deep Dive HTML exists, include it first
+                const legacyHtml = syllabusMode === 'SCHOOL' ? data.deepDiveNotesHtml : data.competitionDeepDiveNotesHtml;
+                if (legacyHtml) {
+                    allTopics = [...allTopics, ...extractTopicsFromHtml(legacyHtml)];
+                }
+
+                entries.forEach(entry => {
+                    if (entry.htmlContent) {
+                        allTopics = [...allTopics, ...extractTopicsFromHtml(entry.htmlContent).map(t => ({ ...t, audioUrl: entry.audioUrl }))];
+                    }
+                });
+            } catch(e) {
+                console.error("Deep Dive Aggregation Error:", e);
+            }
+            setDeepDiveTopics(allTopics);
+        }
+
+      } catch (error) {
+        console.error("Error loading PDF data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, [chapter.id, board, classLevel, stream, subject.name, directResource, syllabusMode]);
+
+  const handlePdfClick = (type: 'FREE' | 'PREMIUM' | 'ULTRA' | 'DEEP_DIVE' | 'AUDIO_SLIDE') => {
+      // Reset Deep Dive State
+      setIsDeepDiveMode(false);
+
+      let link = '';
+      let htmlContent = '';
+      let price = 0;
+      let ttsContent: string | undefined = undefined;
+
+      if (type === 'FREE') {
+          // ... (Existing Logic) ...
+          const htmlKey = syllabusMode === 'SCHOOL' ? 'schoolFreeNotesHtml' : 'competitionFreeNotesHtml';
+          if (syllabusMode === 'SCHOOL') {
+              link = contentData?.schoolPdfLink || contentData?.freeLink;
+              htmlContent = contentData?.[htmlKey] || contentData?.freeNotesHtml;
+          } else {
+              link = contentData?.competitionPdfLink;
+              htmlContent = contentData?.[htmlKey];
+          }
+          price = 0;
+      } else if (type === 'PREMIUM') { // Renamed visually to Auto TTS
+          // ... (Existing Logic) ...
+          const htmlKey = syllabusMode === 'SCHOOL' ? 'schoolPremiumNotesHtml' : 'competitionPremiumNotesHtml';
+          if (syllabusMode === 'SCHOOL') {
+             link = contentData?.schoolPdfPremiumLink || contentData?.premiumLink;
+             htmlContent = contentData?.[htmlKey] || contentData?.premiumNotesHtml;
+             price = contentData?.schoolPdfPrice || contentData?.price;
+          } else {
+             link = contentData?.competitionPdfPremiumLink;
+             htmlContent = contentData?.[htmlKey];
+             price = contentData?.competitionPdfPrice;
+          }
+          if (price === undefined) price = (settings?.defaultPdfCost ?? 5);
+      } else if (type === 'ULTRA') {
+          link = contentData?.ultraPdfLink;
+          price = contentData?.ultraPdfPrice !== undefined ? contentData.ultraPdfPrice : 10;
+      } else if (type === 'DEEP_DIVE') {
+          // Do not overwrite deepDiveTopics state here. It is already aggregated in fetchData(),
+          // which includes both legacy HTML and the new deepDiveEntries (with audioUrl).
+          // We just need to mark htmlContent as truthy so the access check passes.
+          htmlContent = 'DEEP_DIVE_ENABLED';
+
+          // Access Check Handled Below
+      } else if (type === 'AUDIO_SLIDE') {
+          // Fallback links
+          link = syllabusMode === 'SCHOOL' ? (contentData?.schoolPdfPremiumLink || contentData?.premiumLink) : contentData?.competitionPdfPremiumLink;
+
+          // Use new unlimited array for TTS extraction (combine all HTML entries)
+          const entries = syllabusMode === 'SCHOOL' ? (contentData?.schoolPremiumNotesList || []) : (contentData?.competitionPremiumNotesList || []);
+
+          let rawTts = '';
+          if (entries && entries.length > 0) {
+              rawTts = entries.filter((e: any) => e.content).map((e: any) => e.content).join(' ');
+              if (!link) {
+                 const firstPdf = entries.find((e: any) => e.url);
+                 if (firstPdf) link = firstPdf.url;
+              }
+          } else {
+              // Legacy Fallback
+              rawTts = syllabusMode === 'SCHOOL' ? (contentData?.schoolPremiumNotesHtml || contentData?.premiumNotesHtml || '') : (contentData?.competitionPremiumNotesHtml || '');
+          }
+
+          ttsContent = rawTts.replace(/<[^>]*>?/gm, ' ');
+          if (rawTts && !link) htmlContent = rawTts; // Mark target content as available
+      }
+
+      // Prioritize Link, but allow HTML if link is missing
+      // For Deep Dive, we handle specially
+      const targetContent = type === 'DEEP_DIVE' ? 'DEEP_DIVE_MODE' : (link || htmlContent || ttsContent);
+
+      if (!targetContent && type !== 'DEEP_DIVE') {
+          // Coming Soon removed
+          return;
+      }
+
+      if (type === 'DEEP_DIVE' && (!htmlContent || htmlContent.length < 10)) {
+           // Coming Soon removed
+           return;
+      }
+
+      // ... (Access Check Logic - mostly same) ...
+      // Only change: If type === 'DEEP_DIVE', we activate the mode instead of setActivePdf link
+
+      const proceed = () => {
+          if (type === 'DEEP_DIVE') {
+              triggerInterstitial('DEEP_DIVE_MODE');
+          } else {
+              triggerInterstitial(targetContent, ttsContent);
+          }
+      };
+
+      // Check permissions... (Simplified for brevity, assuming same logic as before)
+      // Access Check
+      if (user.role === 'ADMIN') { proceed(); return; }
+      if (user.unlockedContent && user.unlockedContent.includes(chapter.id)) { proceed(); return; }
+
+      // Granular Feature Control
+      if (type === 'DEEP_DIVE') {
+          // Free for everyone via NSTA now, but keeping access check to honor potential admin override
+          const access = checkFeatureAccess('DEEP_DIVE', user, settings || {});
+          if (!access.hasAccess) {
+              if (access.reason === 'FEED_LOCKED') {
+                  setAlertConfig({isOpen: true, message: `🔒 Locked! This content is currently disabled by Admin.`});
+                  return;
+              }
+              // If user is FREE, let them pay instead of blocking completely
+              if (access.reason === 'TIER_RESTRICTED' && access.cost > 0) {
+                   if (user.isAutoDeductEnabled) processPaymentAndOpen(targetContent, access.cost, false, ttsContent, true);
+                   else setPendingPdf({ type, price: access.cost, link: targetContent, tts: ttsContent });
+                   return;
+              }
+              // Otherwise (e.g., zero cost or other reason), default block
+              if (access.cost > 0) {
+                  if (user.isAutoDeductEnabled) processPaymentAndOpen(targetContent, access.cost, false, ttsContent, true);
+                  else setPendingPdf({ type, price: access.cost, link: targetContent, tts: ttsContent });
+              } else {
+                  setAlertConfig({isOpen: true, message: `🔒 Locked! Upgrade your plan to access Deep Dive.`});
+              }
+              return;
+          }
+      }
+
+      // Premium Notes (Audio Slide) - Now uses PREMIUM_NOTES feature
+      if (type === 'AUDIO_SLIDE' || type === 'PREMIUM') {
+          const access = checkFeatureAccess('PREMIUM_NOTES', user, settings || {});
+          if (!access.hasAccess) {
+              if (access.reason === 'FEED_LOCKED') {
+                  setAlertConfig({isOpen: true, message: `🔒 Locked! This content is currently disabled by Admin.`});
+                  return;
+              }
+              // If user is FREE, let them pay instead of blocking completely
+              if (access.reason === 'TIER_RESTRICTED' && access.cost > 0) {
+                   if (user.isAutoDeductEnabled) processPaymentAndOpen(targetContent, access.cost, false, ttsContent, false);
+                   else setPendingPdf({ type, price: access.cost, link: targetContent, tts: ttsContent });
+                   return;
+              }
+              // Otherwise block
+              if (access.cost > 0) {
+                  if (user.isAutoDeductEnabled) processPaymentAndOpen(targetContent, access.cost, false, ttsContent, false);
+                  else setPendingPdf({ type, price: access.cost, link: targetContent, tts: ttsContent });
+              } else {
+                  setAlertConfig({isOpen: true, message: `🔒 Locked! Upgrade your plan to access Premium Notes.`});
+              }
+              return;
+          }
+      }
+
+      if (price === 0) { proceed(); return; }
+
+      const isSubscribed = user.isPremium && user.subscriptionEndDate && new Date(user.subscriptionEndDate) > new Date();
+      if (isSubscribed) {
+          // Tier Checks...
+          if (user.subscriptionTier === 'YEARLY' || user.subscriptionTier === 'LIFETIME' || user.subscriptionLevel === 'ULTRA' || user.subscriptionLevel === 'BASIC') {
+              proceed(); return;
+          }
+      }
+
+      if (user.isAutoDeductEnabled) processPaymentAndOpen(targetContent, price, false, ttsContent, type === 'DEEP_DIVE');
+      else setPendingPdf({ type, price, link: targetContent, tts: ttsContent });
+  };
+
+  const processPaymentAndOpen = (targetContent: string, price: number, enableAuto: boolean = false, ttsContent?: string, isDeepDive: boolean = false) => {
+      if (user.credits < price) {
+          setAlertConfig({isOpen: true, message: `Insufficient Credits! You need ${price} coins.`});
+          return;
+      }
+
+      // Handle Tab Unlock
+      if (targetContent.startsWith('UNLOCK_TAB_')) {
+          const tabId = targetContent.replace('UNLOCK_TAB_', '');
+          setSessionUnlockedTabs(prev => [...prev, tabId]);
+
+          let updatedUser = { ...user, credits: user.credits - price };
+          if (enableAuto) updatedUser.isAutoDeductEnabled = true;
+          localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+          saveUserToLive(updatedUser);
+          onUpdateUser(updatedUser);
+
+          setActiveTab(tabId as any); // Actually switch the tab now that it's paid
+          setPendingPdf(null);
+          return;
+      }
+
+      let updatedUser = { ...user, credits: user.credits - price };
+      if (enableAuto) updatedUser.isAutoDeductEnabled = true;
+
+      localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+      saveUserToLive(updatedUser);
+      onUpdateUser(updatedUser);
+
+      if (isDeepDive) triggerInterstitial('DEEP_DIVE_MODE');
+      else triggerInterstitial(targetContent, ttsContent);
+      setPendingPdf(null);
+  };
+
+  const triggerInterstitial = (link: string, tts?: string) => {
+      setPendingLink(link);
+      setPendingTts(tts || null);
+      setShowInterstitial(true);
+  };
+
+  const onInterstitialComplete = () => {
+      setShowInterstitial(false);
+      if (pendingLink) {
+          if (pendingLink === 'DEEP_DIVE_MODE') {
+              setIsDeepDiveMode(true);
+              setActivePdf(null);
+          } else {
+              setActivePdf(pendingLink);
+              // Auto-start TTS for Audio Slide is handled in useEffect or button
+          }
+          setPendingLink(null);
+          setPendingTts(null);
+      }
+  };
+
+  // ... (Render Helpers) ...
+
+  // RENDER
+  if (showInterstitial) {
+      const isPremiumUser = user.isPremium && user.subscriptionEndDate && new Date(user.subscriptionEndDate) > new Date();
+      const aiImage = contentData?.chapterAiImage || settings?.aiLoadingImage;
+      return <AiInterstitial onComplete={onInterstitialComplete} userType={isPremiumUser ? 'PREMIUM' : 'FREE'} imageUrl={aiImage} contentType="PDF" />;
+  }
+
+  // PDF OVERLAY (Zen Mode for Premium/Additional)
+  if (activePdf) {
+      const formattedLink = formatDriveLink(activePdf);
+      return (
+          <div className="fixed inset-0 z-[9999] bg-black flex flex-col animate-in fade-in zoom-in-95 h-screen w-screen overflow-hidden">
+              {/* Minimal Floating Controls */}
+              <div className="absolute top-4 left-4 z-50">
+                  <button onClick={() => { setActivePdf(null); stopAllSpeech(); }} className="bg-black/50 backdrop-blur-md text-white p-3 rounded-full hover:bg-black/70 border border-white/20 shadow-lg">
+                      <ArrowLeft size={24} />
+                  </button>
+              </div>
+
+              <div className="flex-1 relative w-full h-full">
+                  <iframe
+                      src={formattedLink}
+                      className="w-full h-full border-none"
+                      title="PDF Viewer"
+                      allow="autoplay"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups-to-escape-sandbox"
+                  />
+                  {/* Invisible Overlay to block top bar clicks if iframe sandbox isn't enough */}
+                  <div className="absolute top-0 left-0 w-full h-16 bg-transparent pointer-events-auto" onClick={(e) => e.stopPropagation()} />
+              </div>
+          </div>
+      );
+  }
+
+  // RESOURCE OVERLAY (Handles Text-Only AND PDF+Text) - ZEN MODE
+  if (activeNoteContent) {
+      const hasPdf = !!activeNoteContent.pdfUrl;
+      const formattedLink = hasPdf ? formatDriveLink(activeNoteContent.pdfUrl!) : '';
+
+      return (
+          <div className="fixed inset-0 z-[9999] bg-black flex flex-col animate-in fade-in zoom-in-95 h-screen w-screen overflow-hidden">
+              {/* Minimal Floating Controls */}
+              <div className="absolute top-4 left-4 z-50 flex gap-4">
+                  <button onClick={() => { setActiveNoteContent(null); stopAllSpeech(); }} className="bg-black/50 backdrop-blur-md text-white p-3 rounded-full hover:bg-black/70 border border-white/20 shadow-lg">
+                      <ArrowLeft size={24} />
+                  </button>
+
+                  {/* CUSTOM AUDIO PLAY (IF AVAILABLE) */}
+                  {activeNoteContent.audioUrl && (
+                      <button
+                          onClick={() => playCustomAudio(activeNoteContent.audioUrl!)}
+                          className="bg-gradient-to-r from-amber-400 to-orange-500 text-white px-4 py-2 rounded-full hover:from-amber-500 hover:to-orange-600 shadow-lg flex items-center gap-2 font-bold text-sm transition-transform hover:scale-105"
+                          title="Play Premium Audio"
+                      >
+                          <Music size={20} /> Premium Audio
+                      </button>
+                  )}
+
+                  {/* TTS Toggle */}
+                  <button
+                      onClick={() => {
+                          if (isAutoPlaying) {
+                              stopAllSpeech();
+                          } else {
+                              setIsAutoPlaying(true);
+                              const plainText = activeNoteContent.content.replace(/<[^>]*>?/gm, ' ');
+                              speakText(plainText, null, speechRate, 'hi-IN', undefined, () => setIsAutoPlaying(false));
+                          }
+                      }}
+                      className={`bg-black/50 backdrop-blur-md text-white p-3 rounded-full hover:bg-black/70 border border-white/20 shadow-lg ${isAutoPlaying ? 'text-red-400 border-red-400 animate-pulse' : ''}`}
+                  >
+                      {isAutoPlaying ? <Pause size={24} /> : <Headphones size={24} />}
+                  </button>
+
+                  <button
+                      onClick={() => {
+                          saveOfflineItem({
+                              id: `note_${chapter.id}_${Date.now()}`,
+                              type: 'NOTE',
+                              title: activeNoteContent.title || 'Saved Note',
+                              subtitle: `${subject.name} - ${chapter.title}`,
+                              data: {
+                                  html: activeNoteContent.content
+                              }
+                          });
+                          alert("Note Saved Offline!");
+                      }}
+                      className="flex items-center gap-2 bg-slate-800 backdrop-blur-md text-white px-4 py-2 rounded-full hover:bg-slate-900 border border-slate-700 shadow-xl font-bold text-sm"
+                      title="Save Offline"
+                  >
+                      <Download size={18} className="animate-bounce" /> <span>Save</span>
+                  </button>
+              </div>
+
+              <div className="flex-1 relative flex flex-col w-full h-full">
+                  {hasPdf ? (
+                      // PDF VIEW (Full Screen)
+                      <>
+                          <div className="flex-1 relative w-full h-full">
+                              <iframe
+                                  src={formattedLink}
+                                  className="w-full h-full border-none"
+                                  title="PDF Viewer"
+                                  allow="autoplay"
+                                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups-to-escape-sandbox"
+                              />
+                              <div className="absolute top-0 left-0 w-full h-16 bg-transparent pointer-events-auto" onClick={(e) => e.stopPropagation()} />
+                          </div>
+                      </>
+                  ) : (
+                      // TEXT ONLY VIEW (Dark Mode Reader)
+                      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 bg-slate-900 text-slate-300">
+                          <div className="w-full max-w-none mx-auto pt-16">
+                              <h2 className="text-2xl font-black text-white mb-6">{activeNoteContent.title}</h2>
+                              <div className="prose prose-invert prose-lg max-w-none px-2 student-extended-notes" dangerouslySetInnerHTML={{ __html: activeNoteContent.content }} />
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+      );
+  }
+
+  // --- NEW TABBED VIEW ---
+  return (
+    <div onScroll={handleScroll} className={`bg-slate-50 h-screen overflow-y-auto pb-6 animate-in fade-in slide-in-from-right-8 ${isFullscreen ? 'm-0 p-0' : ''}`}>
+       <CustomAlert
+           isOpen={alertConfig.isOpen}
+           message={alertConfig.message}
+           onClose={() => setAlertConfig({...alertConfig, isOpen: false})}
+       />
+
+       {/* HEADER */}
+       <div className={`sticky top-0 z-30 bg-white shadow-sm flex flex-col transition-all duration-300 ${!showHeader ? '-translate-y-full absolute opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'} ${isFullscreen ? 'w-full m-0 rounded-none' : 'border-b border-slate-100'}`}>
+           <div className={`flex items-center gap-3 ${isFullscreen ? 'p-2 sm:p-4' : 'p-3 sm:p-4'}`}>
+               <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-full text-slate-600">
+                   <ArrowLeft size={20} />
+               </button>
+               <div className="flex-1">
+                   <h3 className="font-bold text-slate-800 leading-tight line-clamp-1">{chapter.title}</h3>
+                   <div className="flex gap-2 mt-1">
+                     <button onClick={() => setSyllabusMode('SCHOOL')} className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all ${syllabusMode === 'SCHOOL' ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>School</button>
+                     <button onClick={() => setSyllabusMode('COMPETITION')} className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all ${syllabusMode === 'COMPETITION' ? 'bg-purple-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>Competition</button>
+                   </div>
+               </div>
+               <button onClick={toggleFullScreen} className="p-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors" title={isFullscreen ? "Exit Full Screen" : "Full Screen"}>
+                   {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+               </button>
+           </div>
+
+           {/* TABS */}
+           {!isFullscreen && (
+               <div className="flex overflow-x-auto border-t border-slate-100 scrollbar-hide">
+                   {[
+                       { id: 'QUICK', label: 'Quick', icon: Zap, show: true },
+                       { id: 'DEEP_DIVE', label: 'Concept', icon: BookOpen, show: true },
+                       { id: 'PREMIUM', label: 'Retention', icon: Crown, show: true },
+                       { id: 'RESOURCES', label: 'Extended', icon: Layers, show: true },
+                       { id: 'TEACHER', label: 'Teaching Strategy', icon: BookOpen, show: user.role === 'TEACHER' || !!user.teacherCode || user.role === 'ADMIN' }
+                           ].filter(t => t.show).map(tab => {
+                               const { hasAccess, cost } = getTabAccess(tab.id);
+                               const isLocked = !hasAccess;
+
+                               return (
+                                   <button
+                                       key={tab.id}
+                                       onClick={() => {
+                                           if (isLocked) {
+                                               if (cost > 0) {
+                                                   setPendingPdf({ type: tab.id as any, price: cost, link: `UNLOCK_TAB_${tab.id}` });
+                                               } else {
+                                                   setAlertConfig({isOpen: true, message: `🔒 Locked! Upgrade your plan or wait for Admin access.`});
+                                               }
+                                               return;
+                                           }
+                                           setActiveTab(tab.id as any);
+                                           stopAllSpeech();
+                                       }}
+                                       className={`flex-1 min-w-[85px] py-2 sm:py-3 text-[10px] sm:text-xs font-bold flex flex-col items-center gap-1 border-b-2 transition-all ${activeTab === tab.id ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-transparent text-slate-600 hover:bg-slate-50'} ${isLocked && cost === 0 ? 'grayscale' : ''}`}
+                                   >
+                                       <div className="relative">
+                                           <tab.icon size={14} className="sm:w-4 sm:h-4" />
+                                           {isLocked && <div className="absolute -top-1 -right-2 bg-red-500 rounded-full p-0.5 border border-white"><Lock size={8} className="text-white"/></div>}
+                                       </div>
+                                       {tab.label}
+                                   </button>
+                               );
+                           })}
+               </div>
+           )}
+       </div>
+
+       {/* CONTENT BODY (WRAPPED IN ERROR BOUNDARY) */}
+       <ErrorBoundary>
+       <div className="flex-1 overflow-y-auto">
+
+           {/* 1. QUICK REVISION */}
+           {activeTab === 'QUICK' && (
+               <div className="p-0 sm:p-4 space-y-4 w-full">
+                   <div className="flex justify-end gap-2 mb-2 px-4 sm:px-0 mt-4 sm:mt-0">
+                       {quickRevisionPoints.length > 0 && (
+                           <>
+                               <button
+                                   onClick={() => {
+                                       const htmlContent = quickRevisionPoints.map(g => `<h3>${g.title}</h3>` + g.points.map(p => `<div>${p}</div>`).join('')).join('<hr/>');
+                                       saveOfflineItem({
+                                           id: `quick_notes_${chapter.id}`,
+                                           type: 'NOTE',
+                                           title: 'Quick Revision',
+                                           subtitle: `${subject.name} - ${chapter.title}`,
+                                           data: { html: htmlContent }
+                                       });
+                                       setAlertConfig({isOpen: true, message: 'Quick Notes Saved Offline! Access them in the History tab.'});
+                                   }}
+                                   className="flex items-center gap-2 px-3 py-1.5 rounded-full font-bold text-xs transition-all bg-slate-800 text-white shadow hover:bg-slate-900"
+                               >
+                                   <Download size={12} /> Save Offline
+                               </button>
+                               <button
+                                   onClick={() => {
+                                       if (isAutoPlaying) {
+                                           stopAllSpeech();
+                                       } else {
+                                           setIsAutoPlaying(true);
+                                           const fullText = quickRevisionPoints.flatMap(g => g.points).map(p => p.replace(/<[^>]*>?/gm, ' ')).join('. ');
+                                           speakText(fullText, null, speechRate, 'hi-IN', undefined, () => setIsAutoPlaying(false));
+                                       }
+                                   }}
+                                   className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-bold text-xs transition-all ${isAutoPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-yellow-500 text-white shadow'}`}
+                               >
+                                   {isAutoPlaying ? <Pause size={12} /> : <Play size={12} />}
+                                   {isAutoPlaying ? 'Stop Reading' : 'Read All'}
+                               </button>
+                           </>
+                       )}
+                   </div>
+
+                   {quickRevisionPoints.length === 0 ? (
+                       <div className="text-center py-12 text-slate-500">
+                           <Zap size={48} className="mx-auto mb-4 opacity-20" />
+                           <p className="text-sm font-bold">No quick revision points found.</p>
+                           <p className="text-xs">Points marked "Quick Revision" in notes appear here.</p>
+                       </div>
+                   ) : (
+                       <div className="space-y-6">
+                           {quickRevisionPoints.map((group, groupIdx) => (
+                               <div key={groupIdx} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative group overflow-hidden">
+                                   <div className="absolute top-0 left-0 w-1 h-full bg-yellow-400"></div>
+
+                                   <div className="flex justify-between items-start mb-4">
+                                       <h3 className="font-black text-slate-800 text-lg pr-8">{group.title}</h3>
+                                       <button
+                                           onClick={() => {
+                                               stopAllSpeech();
+                                               const plainText = group.points.map(p => p.replace(/<[^>]*>?/gm, ' ')).join('. ');
+                                               speakText(plainText, null, speechRate, 'hi-IN');
+                                           }}
+                                           className="p-2 bg-yellow-50 text-yellow-600 rounded-full hover:bg-yellow-100 transition-colors"
+                                           title="Read Topic Revision"
+                                       >
+                                           <Volume2 size={16} />
+                                       </button>
+                                   </div>
+
+                                   <div className="space-y-3 pl-2">
+                                       {group.points.map((point, idx) => (
+                                            <div key={idx} className="prose prose-sm max-w-none text-slate-700 bg-slate-50/50 p-3 rounded-xl border border-slate-50" dangerouslySetInnerHTML={{ __html: point }} />
+                                       ))}
+                                   </div>
+                               </div>
+                           ))}
+                       </div>
+                   )}
+               </div>
+           )}
+
+           {/* 2. DEEP DIVE (HTML + SCROLL) */}
+           {activeTab === 'DEEP_DIVE' && (
+               <div className="p-0 sm:p-4 space-y-6 w-full max-w-none mx-auto">
+                   {(() => {
+                        const access = getTabAccess('DEEP_DIVE');
+
+                        if (!access.hasAccess) {
+                            return (
+                                <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in zoom-in-95">
+                                    <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mb-6 shadow-sm border border-teal-100">
+                                        <Lock size={32} className="text-teal-600" />
+                                    </div>
+                                    <h2 className="text-xl font-black text-slate-800 mb-2">Deep Dive Mode Locked</h2>
+                                    <p className="text-sm text-slate-600 max-w-xs mb-8 leading-relaxed">
+                                        {access.reason === 'FEED_LOCKED' ? 'This content is currently locked by admin.' : 'Unlock in-depth conceptual notes to master this chapter.'}
+                                    </p>
+
+                                    {access.reason !== 'FEED_LOCKED' && access.cost > 0 ? (
+                                        <button
+                                            onClick={() => setPendingPdf({ type: 'DEEP_DIVE', price: access.cost, link: 'UNLOCK_TAB_DEEP_DIVE' })}
+                                            className="px-8 py-3 bg-teal-600 text-white font-bold rounded-xl shadow-lg hover:bg-teal-700 hover:scale-105 transition-all flex items-center gap-2"
+                                        >
+                                            <Zap size={18} /> Unlock for {access.cost} Credits
+                                        </button>
+                                    ) : access.reason !== 'FEED_LOCKED' ? (
+                                        <div className="px-6 py-2 bg-slate-100 text-slate-600 font-bold rounded-lg text-xs uppercase tracking-wider">
+                                            Upgrade Plan to Access
+                                        </div>
+                                    ) : null}
+                                </div>
+                            );
+                        }
+
+                        return (
+                           <>
+                               <div className="flex justify-between items-center mb-4">
+                                   <p className="text-xs font-bold text-slate-600 uppercase">{deepDiveTopics.length} Sections</p>
+                                   <div className="flex gap-2">
+                                       <button
+                                           onClick={() => {
+                                               const htmlContent = deepDiveTopics.map(t => `<h2>${t.title}</h2>${t.content}`).join('<hr/>');
+                                               saveOfflineItem({
+                                                   id: `deep_dive_${chapter.id}`,
+                                                   type: 'NOTE',
+                                                   title: 'Deep Dive Notes',
+                                                   subtitle: `${subject.name} - ${chapter.title}`,
+                                                   data: { html: htmlContent }
+                                               });
+                                               setAlertConfig({isOpen: true, message: 'Deep Dive Notes Saved Offline! Access them in the History tab.'});
+                                           }}
+                                           className="flex items-center gap-2 px-3 py-1.5 rounded-full font-bold text-xs transition-all bg-slate-800 text-white shadow hover:bg-slate-900"
+                                       >
+                                           <Download size={12} /> Save Offline
+                                       </button>
+                                       <button
+                                          onClick={() => {
+                                              if (isAutoPlaying) {
+                                                  setIsAutoPlaying(false);
+                                                  stopSpeech();
+                                              } else {
+                                                  setIsAutoPlaying(true);
+                                                  setActiveTopicIndex(0);
+                                              }
+                                          }}
+                                          className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-bold text-xs transition-all ${isAutoPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-teal-600 text-white shadow'}`}
+                                      >
+                                          {isAutoPlaying ? <Pause size={12} /> : <Play size={12} />}
+                                          {isAutoPlaying ? 'Stop' : 'Auto Play'}
+                                      </button>
+                                   </div>
+                               </div>
+
+                               {deepDiveTopics.length === 0 && (
+                                   <div className="text-center py-12 text-slate-500">
+                                       <BookOpen size={48} className="mx-auto mb-4 opacity-20" />
+                                       <p className="text-sm font-bold">No Deep Dive content available.</p>
+                                   </div>
+                               )}
+
+                               {deepDiveTopics.map((topic, idx) => {
+                                  const isActive = topicSpeakingState === idx;
+                                  return (
+                                      <div
+                                          id={`topic-card-${idx}`}
+                                          key={idx}
+                                          className={`bg-white rounded-none sm:rounded-2xl p-4 sm:p-6 shadow-sm border-2 transition-all w-full ${isActive ? 'border-teal-400 ring-2 ring-teal-100 scale-[1.01] sm:scale-100' : 'border-transparent'}`}
+                                      >
+                                          <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-2">
+                                              <div>
+                                                  {idx === 0 && topic.title !== "Introduction" && (
+                                                      <span className="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded mb-1 inline-block">
+                                                          CHAPTER DEEP DIVE
+                                                      </span>
+                                                  )}
+                                                  {idx > 0 && (
+                                                      <span className="text-[10px] font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded mb-1 inline-block">
+                                                          TOPIC {idx}
+                                                      </span>
+                                                  )}
+                                                  <h4 className="text-lg font-black text-slate-800">{topic.title}</h4>
+                                              </div>
+                                              <div className="flex gap-2 items-center">
+                                                  {topic.audioUrl && (
+                                                      <button
+                                                          onClick={() => playCustomAudio(topic.audioUrl!)}
+                                                          className="px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white hover:from-amber-500 hover:to-orange-600 shadow-md flex items-center gap-1.5 font-bold text-xs transition-transform hover:scale-105"
+                                                          title="Play Premium Audio"
+                                                      >
+                                                          <Music size={14} /> Premium Audio
+                                                      </button>
+                                                  )}
+                                                  <button
+                                                      onClick={() => handleTopicPlay(idx)}
+                                                      className={`p-2 rounded-full transition-colors ${isActive ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600 hover:bg-teal-50 hover:text-teal-600'}`}
+                                                      title="Play AI Text-to-Speech"
+                                                  >
+                                                      {isActive ? <Pause size={20} /> : <Volume2 size={20} />}
+                                                  </button>
+                                              </div>
+                                          </div>
+                                          <div
+                                              className="prose prose-sm max-w-none text-slate-600 leading-relaxed"
+                                              dangerouslySetInnerHTML={{ __html: topic.content }}
+                                          />
+                                      </div>
+                                  );
+                              })}
+                           </>
+                        );
+                   })()}
+               </div>
+           )}
+
+           {/* 3. PREMIUM NOTES (PDF + TTS) */}
+           {activeTab === 'PREMIUM' && (
+               <div className="h-[calc(100vh-140px)] flex flex-col premium-slides-container">
+                   {(() => {
+                        const access = getTabAccess('PREMIUM');
+
+                        if (!access.hasAccess) {
+                            return (
+                                <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in zoom-in-95 bg-slate-50 h-full">
+                                    <div className="w-20 h-20 bg-purple-50 rounded-full flex items-center justify-center mb-6 shadow-sm border border-purple-100">
+                                        <Lock size={32} className="text-purple-600" />
+                                    </div>
+                                    <h2 className="text-xl font-black text-slate-800 mb-2">Premium Audio Slides Locked</h2>
+                                    <p className="text-sm text-slate-600 max-w-xs mb-8 leading-relaxed">
+                                        {access.reason === 'FEED_LOCKED' ? 'Content locked by admin.' : 'Visual slides with synchronized audio narration.'}
+                                    </p>
+
+                                    {access.reason !== 'FEED_LOCKED' && access.cost > 0 ? (
+                                        <button
+                                            onClick={() => setPendingPdf({ type: 'PREMIUM', price: access.cost, link: 'UNLOCK_TAB_PREMIUM' })}
+                                            className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl shadow-lg hover:bg-purple-700 hover:scale-105 transition-all flex items-center gap-2"
+                                        >
+                                            <Zap size={18} /> Unlock for {access.cost} Credits
+                                        </button>
+                                    ) : access.reason !== 'FEED_LOCKED' ? (
+                                        <div className="px-6 py-2 bg-slate-100 text-slate-600 font-bold rounded-lg text-xs uppercase tracking-wider">
+                                            Upgrade Plan to Access
+                                        </div>
+                                    ) : null}
+                                </div>
+                            );
+                        }
+
+                        return (
+                           <div className="flex flex-row h-full w-full">
+                               {/* ENTRY SELECTOR IF MULTIPLE */}
+                               {(() => {
+                                   let entries = syllabusMode === 'SCHOOL' ? (contentData?.schoolPremiumNotesList || []) : (contentData?.competitionPremiumNotesList || []);
+
+                                   if (entries.length <= 1) return null;
+
+                                   return (
+                                       <div className="bg-slate-100 p-2 flex flex-col gap-2 overflow-y-auto border-r border-slate-200 min-w-[100px] h-full">
+                                           {entries.map((_: any, i: number) => (
+                                               <button
+                                                   key={i}
+                                                   onClick={() => {
+                                                       setCurrentPremiumEntryIdx(i);
+                                                       stopAllSpeech();
+                                                   }}
+                                                   className={`px-3 py-2 text-xs font-bold rounded-lg text-left transition-all ${currentPremiumEntryIdx === i ? 'bg-purple-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                                               >
+                                                   Part {i + 1}
+                                               </button>
+                                           ))}
+                                       </div>
+                                   );
+                               })()}
+
+                               <div className="flex-1 relative bg-slate-200">
+                                   {(() => {
+                                       // Determine Content
+                                       let pdfLink = '';
+                                       let ttsHtml = '';
+                                       let entryTitle = '';
+
+                                       let entries = syllabusMode === 'SCHOOL' ? (contentData?.schoolPremiumNotesList || []) : (contentData?.competitionPremiumNotesList || []);
+
+                                       // Construct a virtual list for selection logic from Premium Notes List
+                                       let virtualList: {title: string, pdf: string, html: string}[] = [];
+
+                                       entries.forEach((e: any, i: number) => {
+                                           virtualList.push({
+                                               title: e.title || `Premium Note ${i + 1}`,
+                                               pdf: e.url || '',
+                                               html: e.content || ''
+                                           });
+                                       });
+
+                                       // Safety check
+                                       if (currentPremiumEntryIdx >= virtualList.length && virtualList.length > 0) {
+                                           const item = virtualList[0];
+                                           pdfLink = item.pdf;
+                                           ttsHtml = item.html;
+                                           entryTitle = item.title;
+                                       } else if (virtualList.length > 0) {
+                                           const item = virtualList[currentPremiumEntryIdx];
+                                           pdfLink = item.pdf;
+                                           ttsHtml = item.html;
+                                           entryTitle = item.title;
+                                       }
+
+                                       const formattedLink = formatDriveLink(pdfLink);
+
+                                       return (
+                                           <div className="flex-1 flex flex-col w-full h-full relative">
+                                               {/* Selection Header (Only if multiple items) */}
+                                               {virtualList.length > 1 && (
+                                                   <div className="absolute top-0 left-0 w-full z-20 bg-white/90 backdrop-blur-sm border-b border-slate-200 p-2 overflow-x-auto flex gap-2">
+                                                       {virtualList.map((item, i) => (
+                                                           <button
+                                                               key={i}
+                                                               onClick={() => {
+                                                                   setCurrentPremiumEntryIdx(i);
+                                                                   stopAllSpeech();
+                                                               }}
+                                                               className={`px-3 py-1.5 rounded-lg text-[10px] font-bold whitespace-nowrap transition-all flex flex-col items-center border ${currentPremiumEntryIdx === i ? 'bg-purple-600 text-white border-purple-600 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                                                           >
+                                                               <span>{`NOTE ${i + 1}`}</span>
+                                                               <span className="opacity-80 text-[9px] truncate max-w-[80px]">{item.title}</span>
+                                                           </button>
+                                                       ))}
+                                                   </div>
+                                               )}
+
+                                               {/* Content Container (Adjust top padding if header exists) */}
+                                               <div className={`relative w-full h-full ${virtualList.length > 1 ? 'pt-14' : ''}`}>
+                                                   {pdfLink ? (
+                                                       <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-slate-900">
+                                                            <div className="w-[100vh] h-[100vw] rotate-90 origin-center flex items-center justify-center">
+                                                                <iframe
+                                                                    src={formattedLink}
+                                                                    className="w-full h-full border-none"
+                                                                    title="PDF Viewer"
+                                                                    allow="autoplay"
+                                                                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups-to-escape-sandbox"
+                                                                />
+                                                            </div>
+                                                            {/* Invisible Header Blocker */}
+                                                            <div className="absolute top-0 left-0 w-full h-12 bg-transparent pointer-events-auto" onClick={(e) => e.stopPropagation()} />
+                                                       </div>
+                                                   ) : (
+                                                       <div className="flex items-center justify-center h-full text-slate-500 font-bold bg-slate-50">
+                                                           <div className="text-center">
+                                                               <FileText size={48} className="mx-auto mb-2 opacity-20" />
+                                                               <p>No PDF attached for this section.</p>
+                                                               <p className="text-xs font-normal mt-1 text-slate-500">{entryTitle}</p>
+                                                           </div>
+                                                       </div>
+                                                   )}
+
+                                                   {/* FLOATING AUDIO PLAYER */}
+                                                   {(ttsHtml && ttsHtml.length > 10) && (
+                                                       <div className="absolute bottom-4 right-4 bg-white p-2 rounded-full shadow-xl border border-slate-200 flex items-center gap-2 z-10 animate-in fade-in slide-in-from-bottom-4">
+                                                           <button
+                                                              onClick={() => {
+                                                                  if (isAutoPlaying) {
+                                                                      stopAllSpeech();
+                                                                  } else {
+                                                                      // START PLAYBACK
+                                                                      const topics = extractTopicsFromHtml(ttsHtml);
+                                                                      let chunks: string[] = [];
+
+                                                                      if (topics.length > 0 && topics[0].title !== "Notes") {
+                                                                          chunks = topics.map(t => `${t.title}. ${t.content}`);
+                                                                      } else {
+                                                                          const rawText = topics[0].content;
+                                                                          if (rawText.length > 4000) {
+                                                                              chunks = rawText.match(/[^.!?]+[.!?]+/g) || [rawText];
+                                                                          } else {
+                                                                              chunks = [rawText];
+                                                                          }
+                                                                      }
+
+                                                                      setPremiumChunks(chunks);
+                                                                      setPremiumChunkIndex(0);
+                                                                      setIsAutoPlaying(true);
+                                                                  }
+                                                              }}
+                                                              className={`flex items-center gap-2 px-4 py-3 rounded-full text-white shadow-lg transition-all ${isAutoPlaying ? 'bg-red-500 animate-pulse' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                                                          >
+                                                              {isAutoPlaying ? <Pause size={20} /> : <Headphones size={20} />}
+                                                              {isAutoPlaying && <span className="text-xs font-bold">Playing...</span>}
+                                                          </button>
+                                                       </div>
+                                                   )}
+                                               </div>
+                                           </div>
+                                       );
+                                   })()}
+                               </div>
+                           </div>
+                        );
+                   })()}
+               </div>
+           )}
+
+           {/* 5. TEACHER GUIDE (TEACHING STRATEGY) */}
+           {activeTab === 'TEACHER' && (
+               <div className="p-0 sm:p-4 space-y-4 w-full max-w-none mx-auto">
+                   {(() => {
+                       const strategyHtml = contentData?.teachingStrategyHtml;
+                       const strategyNotes = contentData?.teachingStrategyNotes || [];
+
+                       if ((!strategyHtml || strategyHtml.trim().length === 0) && strategyNotes.length === 0) {
+                           return (
+                               <div className="flex flex-col items-center justify-center py-20 text-center text-slate-600">
+                                   <BookOpen size={48} className="mb-4 text-purple-200" />
+                                   <h3 className="font-bold text-lg text-slate-700">No Strategy Guide Added</h3>
+                                   <p className="text-xs max-w-xs mt-2">The admin hasn't added a Teaching Strategy for this chapter yet.</p>
+                               </div>
+                           );
+                       }
+
+                       // Combine legacy html as the first note if no title provided, or just map them all
+                       const allStrategyNotes = [];
+                       if (strategyHtml && strategyHtml.trim().length > 0) {
+                           allStrategyNotes.push({ id: 'legacy-1', title: 'Strategy Overview', content: strategyHtml });
+                       }
+                       if (strategyNotes.length > 0) {
+                           allStrategyNotes.push(...strategyNotes);
+                       }
+
+                       if (allStrategyNotes.length === 0) return null;
+
+                       const currentNote = allStrategyNotes[currentStrategyIndex];
+                       if (!currentNote) return null;
+
+                       return (
+                           <div className="flex flex-col h-full max-w-3xl mx-auto">
+                               {/* Topic Navigation Menu */}
+                               <div className="flex justify-between items-center mb-4">
+                                   {allStrategyNotes.length > 1 ? (
+                                       <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-hide px-1 flex-1">
+                                           {allStrategyNotes.map((note, idx) => (
+                                               <button
+                                                   key={idx}
+                                                   onClick={() => { setCurrentStrategyIndex(idx); stopSpeech(); }}
+                                                   className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${currentStrategyIndex === idx ? 'bg-purple-600 text-white shadow-md' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                                               >
+                                                   {note.title || `Topic ${idx + 1}`}
+                                               </button>
+                                           ))}
+                                       </div>
+                                   ) : <div className="flex-1"></div>}
+
+                                   <button
+                                       onClick={() => {
+                                           const htmlContent = allStrategyNotes.map(n => `<h2>${n.title || 'Teaching Strategy'}</h2>${n.content}`).join('<hr/>');
+                                           saveOfflineItem({
+                                               id: `strategy_${chapter.id}`,
+                                               type: 'NOTE',
+                                               title: 'Teaching Strategy',
+                                               subtitle: `${subject.name} - ${chapter.title}`,
+                                               data: { html: htmlContent }
+                                           });
+                                           setAlertConfig({isOpen: true, message: 'Teaching Strategy Saved Offline! Access them in the History tab.'});
+                                       }}
+                                       className="flex items-center gap-2 px-3 py-1.5 rounded-full font-bold text-xs transition-all bg-slate-800 text-white shadow hover:bg-slate-900 ml-2 whitespace-nowrap"
+                                   >
+                                       <Download size={12} /> Save Offline
+                                   </button>
+                               </div>
+
+                               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6 flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
+                                   <div className="bg-purple-600 p-4 text-white flex justify-between items-start">
+                                       <div>
+                                           <h3 className="font-black text-lg flex items-center gap-2"><GraduationCap size={20} /> {currentNote.title || 'Teaching Strategy'}</h3>
+                                           <p className="text-xs text-purple-200 font-medium">Exclusive Guide for Educators</p>
+                                       </div>
+                                       <div className="flex gap-2 items-center">
+                                           {currentNote.audioUrl && (
+                                               <button
+                                                   onClick={() => playCustomAudio(currentNote.audioUrl)}
+                                                   className="px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white hover:from-amber-500 hover:to-orange-600 shadow-md flex items-center gap-1.5 font-bold text-xs transition-transform hover:scale-105"
+                                                   title="Play Premium Audio Strategy"
+                                               >
+                                                   <Music size={14} /> Premium Audio
+                                               </button>
+                                           )}
+                                           <SpeakButton text={currentNote.content} className="bg-white/20 text-white hover:bg-white/30" />
+                                       </div>
+                                   </div>
+                                   <div
+                                       className="p-4 sm:p-6 prose prose-slate max-w-none teacher-guide-container overflow-y-auto"
+                                       dangerouslySetInnerHTML={{ __html: currentNote.content }}
+                                   />
+                               </div>
+
+                               {/* Pagination Controls */}
+                               {allStrategyNotes.length > 1 && (
+                                   <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm mt-auto mb-4">
+                                       <button
+                                           onClick={() => { setCurrentStrategyIndex(Math.max(0, currentStrategyIndex - 1)); stopSpeech(); }}
+                                           disabled={currentStrategyIndex === 0}
+                                           className="px-4 py-2 rounded-lg font-bold text-xs bg-slate-100 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-200 transition-colors"
+                                       >
+                                           Previous Topic
+                                       </button>
+                                       <span className="text-xs font-bold text-slate-500">
+                                           {currentStrategyIndex + 1} of {allStrategyNotes.length}
+                                       </span>
+                                       <button
+                                           onClick={() => { setCurrentStrategyIndex(Math.min(allStrategyNotes.length - 1, currentStrategyIndex + 1)); stopSpeech(); }}
+                                           disabled={currentStrategyIndex === allStrategyNotes.length - 1}
+                                           className="px-4 py-2 rounded-lg font-bold text-xs bg-purple-100 text-purple-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-200 transition-colors"
+                                       >
+                                           Next Topic
+                                       </button>
+                                   </div>
+                               )}
+                           </div>
+                       );
+                   })()}
+               </div>
+           )}
+
+           {/* 4. RESOURCES (ADDITIONAL NOTES) */}
+           {activeTab === 'RESOURCES' && (
+               <div className="p-0 sm:p-4 space-y-4 w-full max-w-none mx-auto">
+                   {(() => {
+                        const access = getTabAccess('RESOURCES');
+
+                        if (!access.hasAccess) {
+                            return (
+                                <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in zoom-in-95">
+                                    <div className="w-20 h-20 bg-cyan-50 rounded-full flex items-center justify-center mb-6 shadow-sm border border-cyan-100">
+                                        <Lock size={32} className="text-cyan-600" />
+                                    </div>
+                                    <h2 className="text-xl font-black text-slate-800 mb-2">Additional Resources Locked</h2>
+                                    <p className="text-sm text-slate-600 max-w-xs mb-8 leading-relaxed">
+                                        {access.reason === 'FEED_LOCKED' ? 'This section is disabled by admin.' : 'Extra reading material and reference documents.'}
+                                    </p>
+
+                                    {access.reason !== 'FEED_LOCKED' && access.cost > 0 ? (
+                                        <button
+                                            onClick={() => setPendingPdf({ type: 'RESOURCES', price: access.cost, link: 'UNLOCK_TAB_RESOURCES' })}
+                                            className="px-8 py-3 bg-cyan-600 text-white font-bold rounded-xl shadow-lg hover:bg-cyan-700 hover:scale-105 transition-all flex items-center gap-2"
+                                        >
+                                            <Zap size={18} /> Unlock for {access.cost} Credits
+                                        </button>
+                                    ) : access.reason !== 'FEED_LOCKED' ? (
+                                        <div className="px-6 py-2 bg-slate-100 text-slate-600 font-bold rounded-lg text-xs uppercase tracking-wider">
+                                            Upgrade Plan to Access
+                                        </div>
+                                    ) : null}
+                                </div>
+                            );
+                        }
+
+                        return (
+                           <>
+                               <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-2">
+                                   <Layers size={16} className="text-cyan-600" /> Additional Resources
+                               </h4>
+
+                               {/* FREE NOTES (LEGACY SUPPORT) - Conditional Render */}
+                               {(() => {
+                                   const freeLink = syllabusMode === 'SCHOOL' ? (contentData?.schoolPdfLink || contentData?.freeLink) : contentData?.competitionPdfLink;
+                                   const freeHtml = syllabusMode === 'SCHOOL' ? (contentData?.schoolFreeNotesHtml || contentData?.freeNotesHtml) : contentData?.competitionFreeNotesHtml;
+
+                                   if (!freeLink && (!freeHtml || freeHtml.length < 10)) return null;
+
+                                   return (
+                                       <button onClick={() => handlePdfClick('FREE')} className="w-full p-4 rounded-none sm:rounded-xl border-y sm:border border-slate-200 bg-white hover:bg-slate-50 flex items-center gap-3 transition-all">
+                                           <div className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center"><FileText size={20} /></div>
+                                           <div className="flex-1 text-left"><h4 className="font-bold text-slate-700 text-sm">Standard Notes</h4><p className="text-[10px] text-slate-500">Basic Reading Material</p></div>
+                                       </button>
+                                   );
+                               })()}
+
+                               {(() => {
+                                   let addNotes: AdditionalNoteEntry[] = [];
+                                   // STRICT MODE: Only use new fields to avoid ghost data
+                                   if (syllabusMode === 'SCHOOL') addNotes = contentData?.schoolAdditionalNotes || [];
+                                   else addNotes = contentData?.competitionAdditionalNotes || [];
+
+                                   if (addNotes.length === 0) return <p className="text-center text-xs text-slate-500 py-4">No additional resources added.</p>;
+
+                                   return addNotes.map((note: AdditionalNoteEntry, idx: number) => (
+                                       <button
+                                           key={idx}
+                                           onClick={() => {
+                                               // Smart Open Logic
+                                               if (note.pdfLink && note.noteContent) {
+                                                   // Hybrid Mode: Show PDF with Persistent Audio Overlay
+                                                   setActiveNoteContent({ title: note.title || `Note ${idx + 1}`, content: note.noteContent, pdfUrl: note.pdfLink, audioUrl: note.audioUrl });
+                                               } else if (note.pdfLink) {
+                                                   // Even if it's just PDF, if it has audioUrl, open via Hybrid Mode to show the audio play button
+                                                   if (note.audioUrl) {
+                                                       setActiveNoteContent({ title: note.title || `Note ${idx + 1}`, content: '', pdfUrl: note.pdfLink, audioUrl: note.audioUrl });
+                                                   } else {
+                                                       setActivePdf(note.pdfLink);
+                                                   }
+                                               } else if (note.noteContent) {
+                                                   setActiveNoteContent({ title: note.title || `Note ${idx + 1}`, content: note.noteContent, audioUrl: note.audioUrl });
+                                               }
+                                           }}
+                                           className="w-full p-4 rounded-none sm:rounded-xl border-y sm:border border-cyan-100 bg-white hover:bg-cyan-50 flex items-center gap-3 transition-all"
+                                       >
+                                           <div className="w-10 h-10 rounded-full bg-cyan-50 text-cyan-600 flex items-center justify-center"><Book size={20} /></div>
+                                           <div className="flex-1 text-left">
+                                               <h4 className="font-bold text-slate-700 text-sm">{note.title || `Resource ${idx + 1}`}</h4>
+                                               <p className="text-[10px] text-slate-500">
+                                                   {note.pdfLink && note.noteContent ? 'PDF + Audio' : note.pdfLink ? 'PDF Document' : 'Reading Material'}
+                                               </p>
+                                           </div>
+                                       </button>
+                                   ));
+                               })()}
+                           </>
+                        );
+                   })()}
+               </div>
+           )}
+
+       </div>
+       </ErrorBoundary>
+
+       {/* CONFIRMATION & INFO MODALS ... */}
+       {pendingPdf && <CreditConfirmationModal title="Unlock Content" cost={pendingPdf.price} userCredits={user.credits} isAutoEnabledInitial={!!user.isAutoDeductEnabled} onCancel={() => setPendingPdf(null)} onConfirm={(auto) => processPaymentAndOpen(pendingPdf.link, pendingPdf.price, auto, pendingPdf.tts, pendingPdf.type === 'DEEP_DIVE')} />}
+    </div>
+  );
+};
